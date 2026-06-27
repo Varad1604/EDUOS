@@ -1,0 +1,301 @@
+use axum::{
+    extract::{Request, State},
+    middleware::Next,
+    response::Response,
+};
+use crate::{error::AppError, middleware::auth::Claims, state::AppState};
+
+/// Per-request permission check. Call this as a route-level layer.
+#[allow(dead_code)]
+pub async fn check_permission(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+    resource: &str,
+    action: &str,
+) -> Result<Response, AppError> {
+    let claims = req
+        .extensions()
+        .get::<Claims>()
+        .ok_or(AppError::Unauthorized("No auth claims".into()))?
+        .clone();
+
+    let has_permission: Option<bool> = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM role_permissions
+            WHERE role_id = $1 AND resource = $2 AND action = $3
+        )
+        "#,
+    )
+    .bind(claims.role_id)
+    .bind(resource)
+    .bind(action)
+    .fetch_one(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    if has_permission.unwrap_or(false) {
+        Ok(next.run(req).await)
+    } else {
+        Err(AppError::Forbidden)
+    }
+}
+
+/// Global RBAC middleware that intercepts requests, maps them to resource & action, and checks DB permissions.
+pub async fn rbac_middleware(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    let claims = req
+        .extensions()
+        .get::<Claims>()
+        .ok_or(AppError::Unauthorized("No auth claims".into()))?
+        .clone();
+
+    let method = req.method().clone();
+    let path = req.uri().path();
+
+    // Map method and path pattern to resource & action
+    let (resource, action) = match (method.as_str(), path) {
+        // Students
+        ("POST", "/api/v1/students") => ("students", "create"),
+        ("GET", "/api/v1/students") => ("students", "read"),
+        (m, p) if p.starts_with("/api/v1/students/") => {
+            if p.ends_with("/status") {
+                ("students", "update")
+            } else if p.ends_with("/documents") || p.ends_with("/academic-records") || p.ends_with("/enrollment-status") {
+                ("students", "read")
+            } else {
+                match m {
+                    "GET" => ("students", "read"),
+                    "PUT" => ("students", "update"),
+                    "DELETE" => ("students", "delete"),
+                    _ => ("", "")
+                }
+            }
+        }
+        // Courses
+        ("POST", "/api/v1/courses") => ("courses", "create"),
+        ("GET", "/api/v1/courses") => ("courses", "read"),
+        ("GET", p) if p.starts_with("/api/v1/courses/") => ("courses", "read"),
+        ("POST", "/api/v1/classes") => ("courses", "create"),
+        ("GET", "/api/v1/classes") => ("courses", "read"),
+        ("POST", p) if p.starts_with("/api/v1/faculty/") && p.ends_with("/courses") => ("courses", "create"),
+        ("GET", p) if p.starts_with("/api/v1/faculty/") && p.ends_with("/workload") => ("courses", "read"),
+        // Attendance
+        ("POST", "/api/v1/attendance/mark") => ("attendance", "create"),
+        ("POST", "/api/v1/attendance/mark/bulk") => ("attendance", "create"),
+        ("GET", p) if p.starts_with("/api/v1/attendance/") && p.ends_with("/summary") => ("attendance", "read"),
+        // Timetable
+        ("POST", "/api/v1/timetables") => ("courses", "create"),
+        ("GET", p) if p.starts_with("/api/v1/timetables/class/") => ("courses", "read"),
+        ("GET", "/api/v1/course-allocations") => ("courses", "read"),
+        // Exams & Marks
+        ("POST", "/api/v1/exams") => ("exams", "create"),
+        ("GET", "/api/v1/exams") => ("exams", "read"),
+        ("POST", "/api/v1/marks") => ("marks", "create"),
+        ("POST", "/api/v1/results/process") => ("marks", "approve"),
+        ("GET", p) if p.starts_with("/api/v1/results/") => ("marks", "read"),
+        ("GET", p) if p.starts_with("/api/v1/marks/student/") => ("marks", "read"),
+        ("GET", "/api/v1/revaluation") => ("marks", "read"),
+        ("PATCH", p) if p.starts_with("/api/v1/revaluation/") && p.ends_with("/approve") => ("marks", "approve"),
+        // Fees & Finance
+        ("POST", "/api/v1/fee-structures") => ("fees", "create"),
+        ("GET", "/api/v1/fee-structures") => ("fees", "read"),
+        ("POST", "/api/v1/fee-allocations") => ("fees", "create"),
+        ("GET", p) if p.starts_with("/api/v1/fee-allocations/") => ("fees", "read"),
+        ("POST", "/api/v1/payments") => ("fees", "create"),
+        ("GET", p) if p.starts_with("/api/v1/payments/") => ("fees", "read"),
+        ("POST", "/api/v1/scholarships") => ("fees", "create"),
+        ("GET", "/api/v1/scholarships") => ("fees", "read"),
+        ("POST", "/api/v1/accounts") => ("accounts", "create"),
+        ("GET", "/api/v1/accounts") => ("accounts", "read"),
+        ("POST", "/api/v1/journal-entries") => ("accounts", "create"),
+        ("GET", "/api/v1/journal-entries") => ("accounts", "read"),
+        ("PATCH", p) if p.starts_with("/api/v1/journal-entries/") && p.ends_with("/approve") => ("accounts", "approve"),
+        ("GET", "/api/v1/reports/balance-sheet") => ("reports", "read"),
+        ("GET", "/api/v1/reports/income-statement") => ("reports", "read"),
+        ("GET", "/api/v1/reports/audit-logs") => ("reports", "read"),
+        // Library
+        ("POST", "/api/v1/library/books") => ("library", "manage"),
+        ("GET", "/api/v1/library/books") => ("library", "view"),
+        ("POST", "/api/v1/library/loans") => ("library", "manage"),
+        ("POST", p) if p.starts_with("/api/v1/library/loans/") && p.ends_with("/return") => ("library", "manage"),
+        ("GET", "/api/v1/library/loans") => ("library", "manage"),
+        ("GET", p) if p.starts_with("/api/v1/library/loans/student/") => ("library", "view"),
+        // Hostel
+        ("POST", "/api/v1/hostel/rooms") => ("hostel", "manage"),
+        ("GET", "/api/v1/hostel/rooms") => ("hostel", "view"),
+        ("POST", "/api/v1/hostel/allocations") => ("hostel", "manage"),
+        ("POST", p) if p.starts_with("/api/v1/hostel/allocations/") && p.ends_with("/vacate") => ("hostel", "manage"),
+        ("GET", "/api/v1/hostel/allocations") => ("hostel", "manage"),
+        ("GET", p) if p.starts_with("/api/v1/hostel/allocations/student/") => ("hostel", "view"),
+        // Transport
+        ("POST", "/api/v1/transport/routes") => ("transport", "manage"),
+        ("GET", "/api/v1/transport/routes") => ("transport", "view"),
+        ("POST", "/api/v1/transport/stops") => ("transport", "manage"),
+        ("GET", p) if p.starts_with("/api/v1/transport/routes/") && p.ends_with("/stops") => ("transport", "view"),
+        ("POST", "/api/v1/transport/vehicles") => ("transport", "manage"),
+        ("GET", "/api/v1/transport/vehicles") => ("transport", "view"),
+        ("POST", "/api/v1/transport/allocations") => ("transport", "manage"),
+        ("POST", p) if p.starts_with("/api/v1/transport/allocations/") && p.ends_with("/vacate") => ("transport", "manage"),
+        ("GET", "/api/v1/transport/allocations") => ("transport", "manage"),
+        ("GET", p) if p.starts_with("/api/v1/transport/allocations/student/") => ("transport", "view"),
+        // Placement
+        ("GET", "/api/v1/placement/stats") => ("placement", "view"),
+        ("GET", "/api/v1/placement/companies") => ("placement", "view"),
+        ("POST", "/api/v1/placement/companies") => ("placement", "manage"),
+        ("PATCH", p) if p.starts_with("/api/v1/placement/companies/") && p.ends_with("/status") => ("placement", "manage"),
+        ("GET", "/api/v1/placement/drives") => ("placement", "view"),
+        ("POST", "/api/v1/placement/drives") => ("placement", "manage"),
+        ("POST", p) if p.starts_with("/api/v1/placement/drives/") && p.ends_with("/close") => ("placement", "manage"),
+        ("GET", "/api/v1/placement/applications") => ("placement", "manage"),
+        ("POST", "/api/v1/placement/applications") => ("placement", "apply"),
+        ("GET", p) if p.starts_with("/api/v1/placement/applications/student/") => ("placement", "view"),
+        ("PATCH", p) if p.starts_with("/api/v1/placement/applications/") && p.ends_with("/status") => ("placement", "manage"),
+        ("GET", p) if p.starts_with("/api/v1/placement/rounds/application/") => ("placement", "view"),
+        ("POST", "/api/v1/placement/rounds") => ("placement", "manage"),
+        ("PATCH", p) if p.starts_with("/api/v1/placement/rounds/") && p.ends_with("/result") => ("placement", "manage"),
+        ("GET", "/api/v1/placement/offers") => ("placement", "manage"),
+        ("POST", "/api/v1/placement/offers") => ("placement", "manage"),
+        ("PATCH", p) if p.starts_with("/api/v1/placement/offers/") && p.ends_with("/status") => ("placement", "view"),
+        // Medical
+        ("GET", "/api/v1/medical/stats") => ("medical", "view"),
+        ("GET", "/api/v1/medical/visits") => ("medical", "view"),
+        ("POST", "/api/v1/medical/visits") => ("medical", "manage"),
+        ("PATCH", p) if p.starts_with("/api/v1/medical/visits/") && p.ends_with("/close") => ("medical", "manage"),
+        ("GET", p) if p.starts_with("/api/v1/medical/visits/") && p.ends_with("/vitals") => ("medical", "view"),
+        ("POST", p) if p.starts_with("/api/v1/medical/visits/") && p.ends_with("/vitals") => ("medical", "manage"),
+        ("GET", p) if p.starts_with("/api/v1/medical/visits/") && p.ends_with("/prescriptions") => ("medical", "view"),
+        ("POST", "/api/v1/medical/prescriptions") => ("medical", "manage"),
+        ("GET", "/api/v1/medical/inventory") => ("medical", "view"),
+        ("POST", "/api/v1/medical/inventory") => ("medical", "manage"),
+        ("PATCH", p) if p.starts_with("/api/v1/medical/inventory/") && p.ends_with("/stock") => ("medical", "manage"),
+        ("GET", "/api/v1/medical/sick-leaves") => ("medical", "view"),
+        ("POST", "/api/v1/medical/sick-leaves") => ("medical", "manage"),
+        _ => ("", "")
+    };
+
+    if resource.is_empty() {
+        return Ok(next.run(req).await);
+    }
+
+    let has_permission: Option<bool> = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM role_permissions
+            WHERE role_id = $1 AND resource = $2 AND action = $3
+        )
+        "#
+    )
+    .bind(claims.role_id)
+    .bind(resource)
+    .bind(action)
+    .fetch_one(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    if has_permission.unwrap_or(false) {
+        Ok(next.run(req).await)
+    } else {
+        Err(AppError::Forbidden)
+    }
+}
+
+/// Seed default role permissions for a new institution.
+pub async fn seed_default_permissions(
+    db: &sqlx::PgPool,
+    institution_id: uuid::Uuid,
+) -> anyhow::Result<()> {
+    // Roles permissions mapping
+    let role_permissions = vec![
+        ("Principal", vec![
+            ("students", "read"), ("students", "create"), ("students", "update"), ("students", "delete"),
+            ("courses", "read"), ("courses", "create"), ("courses", "update"),
+            ("marks", "read"), ("marks", "approve"),
+            ("exams", "read"), ("exams", "create"), ("exams", "approve"),
+            ("fees", "read"), ("fees", "create"), ("fees", "update"), ("fees", "approve"),
+            ("accounts", "read"), ("accounts", "approve"),
+            ("reports", "read"),
+            ("attendance", "read"), ("attendance", "approve"),
+            ("library", "manage"), ("library", "view"),
+            ("hostel", "manage"), ("hostel", "view"),
+            ("transport", "manage"), ("transport", "view"),
+            ("placement", "manage"), ("placement", "view"), ("placement", "apply"),
+            ("medical", "manage"), ("medical", "view"),
+        ]),
+        ("Registrar", vec![
+            ("students", "read"), ("students", "create"), ("students", "update"), ("students", "delete"),
+            ("courses", "read"), ("courses", "create"), ("courses", "update"), ("courses", "delete"),
+            ("marks", "read"), ("marks", "approve"),
+            ("exams", "read"), ("exams", "create"), ("exams", "update"), ("exams", "delete"),
+            ("fees", "read"),
+            ("accounts", "read"),
+            ("reports", "read"), ("reports", "create"), ("reports", "update"), ("reports", "delete"),
+            ("attendance", "read"), ("attendance", "approve"),
+            ("library", "manage"), ("library", "view"),
+            ("hostel", "manage"), ("hostel", "view"),
+            ("transport", "manage"), ("transport", "view"),
+            ("placement", "manage"), ("placement", "view"), ("placement", "apply"),
+            ("medical", "manage"), ("medical", "view"),
+        ]),
+        ("FeeManager", vec![
+            ("students", "read"),
+            ("fees", "read"), ("fees", "create"), ("fees", "update"), ("fees", "approve"),
+            ("accounts", "read"), ("accounts", "create"), ("accounts", "update"), ("accounts", "approve"),
+            ("reports", "read"), ("reports", "create"),
+        ]),
+        ("Faculty", vec![
+            ("students", "read"),
+            ("courses", "read"),
+            ("attendance", "read"), ("attendance", "create"),
+            ("exams", "read"), ("exams", "create"),
+            ("marks", "read"), ("marks", "create"),
+            ("reports", "read"),
+            ("library", "manage"), ("library", "view"),
+            ("hostel", "manage"), ("hostel", "view"),
+            ("transport", "manage"), ("transport", "view"),
+            ("placement", "view"),
+            ("medical", "view"),
+        ]),
+        ("Student", vec![
+            ("students", "read"),
+            ("courses", "read"),
+            ("attendance", "read"),
+            ("exams", "read"),
+            ("marks", "read"),
+            ("fees", "read"), ("fees", "create"), // Pay fee creates fee payments
+            ("library", "view"),
+            ("hostel", "view"),
+            ("transport", "view"),
+            ("placement", "view"), ("placement", "apply"),
+            ("medical", "view"),
+        ]),
+    ];
+
+    for (role_name, perms) in role_permissions {
+        let role_id_opt: Option<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT role_id FROM roles WHERE institution_id = $1 AND role_name = $2"
+        )
+        .bind(institution_id)
+        .bind(role_name)
+        .fetch_optional(db)
+        .await?;
+
+        if let Some(role_id) = role_id_opt {
+            for (resource, action) in perms {
+                sqlx::query(
+                    "INSERT INTO role_permissions (role_id, resource, action)
+                     VALUES ($1, $2, $3) ON CONFLICT DO NOTHING"
+                )
+                .bind(role_id).bind(resource).bind(action)
+                .execute(db).await?;
+            }
+        }
+    }
+
+    Ok(())
+}
+

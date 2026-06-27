@@ -1,0 +1,556 @@
+use uuid::Uuid;
+use chrono::Utc;
+use tracing::{info, error};
+use serde_json::json;
+use crate::{
+    events::types::DomainEvent,
+    state::AppState,
+};
+
+pub async fn start_subscriber(state: AppState) {
+    let mut rx = state.bus.subscribe();
+    info!("Background event subscriber worker started");
+
+    while let Ok(event) = rx.recv().await {
+        let db = state.db.clone();
+        let bus = state.bus.clone();
+        tokio::spawn(async move {
+            if let Err(err) = handle_event(&db, &bus, event).await {
+                error!("Error handling background domain event: {:?}", err);
+            }
+        });
+    }
+}
+
+async fn handle_event(
+    db: &sqlx::PgPool,
+    _bus: &crate::events::bus::EventBus,
+    event: DomainEvent,
+) -> anyhow::Result<()> {
+    match event {
+        DomainEvent::StudentCreated(payload) => {
+            info!("Saga: processing StudentCreated for student_id={}", payload.student_id);
+
+            // 1. Fetch student profile details to match default fee structure
+            let student_opt: Option<(Option<Uuid>, Option<String>, Option<String>, Option<i32>, Option<i32>)> = sqlx::query_as(
+                r#"
+                SELECT branch_id, category, quota, current_semester, current_academic_year
+                FROM student_profiles
+                WHERE student_id = $1 AND soft_deleted = false
+                "#
+            )
+            .bind(payload.student_id)
+            .fetch_optional(db)
+            .await?;
+
+            if let Some((Some(branch_id), Some(category), Some(quota), semester_opt, academic_year_opt)) = student_opt {
+                let semester = semester_opt.unwrap_or(1);
+                let academic_year = academic_year_opt.unwrap_or(2026);
+
+                // 2. Lookup default fee structure matching these attributes
+                let struct_opt: Option<(Uuid, f64)> = sqlx::query_as(
+                    r#"
+                    SELECT fee_structure_id, CAST(total_amount AS FLOAT8)
+                    FROM fee_structures
+                    WHERE institution_id = $1
+                      AND academic_year = $2
+                      AND branch_id = $3
+                      AND category = $4
+                      AND quota = $5
+                    "#
+                )
+                .bind(payload.institution_id)
+                .bind(academic_year)
+                .bind(branch_id)
+                .bind(&category)
+                .bind(&quota)
+                .fetch_optional(db)
+                .await?;
+
+                if let Some((fee_struct_id, total_amount)) = struct_opt {
+                    // 3. Check if fee is already allocated
+                    let exists: bool = sqlx::query_scalar(
+                        "SELECT EXISTS(SELECT 1 FROM fee_allocations WHERE student_id = $1 AND fee_structure_id = $2)"
+                    )
+                    .bind(payload.student_id)
+                    .bind(fee_struct_id)
+                    .fetch_one(db)
+                    .await?;
+
+                    if !exists {
+                        let alloc_id = Uuid::new_v4();
+                        let due_date = Utc::now().date_naive() + chrono::Days::new(30);
+
+                        sqlx::query(
+                            r#"
+                            INSERT INTO fee_allocations
+                                (fee_allocation_id, institution_id, student_id, fee_structure_id,
+                                 academic_year, semester, total_amount, due_date, status)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Generated')
+                            "#,
+                        )
+                        .bind(alloc_id)
+                        .bind(payload.institution_id)
+                        .bind(payload.student_id)
+                        .bind(fee_struct_id)
+                        .bind(academic_year)
+                        .bind(semester)
+                        .bind(total_amount)
+                        .bind(due_date)
+                        .execute(db)
+                        .await?;
+
+                        info!("Saga: Auto-allocated fee_allocation_id={} to student_id={}", alloc_id, payload.student_id);
+
+                        // 4. Log event
+                        sqlx::query(
+                            r#"
+                            INSERT INTO event_log
+                                (event_id, institution_id, event_type, aggregate_id, aggregate_type, user_id, event_payload, event_version)
+                            VALUES
+                                (gen_random_uuid(), $1, 'FeeAllocated', $2, 'Finance', NULL, $3, 1)
+                            "#,
+                        )
+                        .bind(payload.institution_id)
+                        .bind(alloc_id)
+                        .bind(json!({
+                            "student_id": payload.student_id,
+                            "total_amount": total_amount,
+                            "saga": "StudentAdmittedAndFeeAutoGenerated"
+                        }))
+                        .execute(db)
+                        .await?;
+                    }
+                } else {
+                    info!("Saga: No matching fee structure found for branch={}, category={}, quota={}, academic_year={}",
+                        branch_id, category, quota, academic_year);
+                }
+            }
+        }
+        DomainEvent::LibraryFineGenerated(payload) => {
+            info!("Saga: processing LibraryFineGenerated for transaction_id={}, student_id={}", payload.transaction_id, payload.student_id);
+
+            // 1. Fetch account IDs for Accounts Receivable (1201) and Tuition Fee Revenue (4001)
+            let ar_account_id: Uuid = sqlx::query_scalar(
+                "SELECT account_id FROM chart_of_accounts WHERE institution_id = $1 AND account_code = '1201'"
+            )
+            .bind(payload.institution_id)
+            .fetch_one(db)
+            .await?;
+
+            let rev_account_id: Uuid = sqlx::query_scalar(
+                "SELECT account_id FROM chart_of_accounts WHERE institution_id = $1 AND account_code = '4001'"
+            )
+            .bind(payload.institution_id)
+            .fetch_one(db)
+            .await?;
+
+            let mut tx = db.begin().await?;
+
+            // 2. Create Fee Structure for library fine
+            let fee_struct_id = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO fee_structures (fee_structure_id, institution_id, academic_year, branch_id, category, quota, semesters, total_amount)
+                 VALUES ($1, $2, 2026, NULL, NULL, NULL, '[]'::jsonb, $3)"
+            )
+            .bind(fee_struct_id)
+            .bind(payload.institution_id)
+            .bind(payload.amount)
+            .execute(&mut *tx)
+            .await?;
+
+            // 3. Create Fee Allocation
+            let alloc_id = Uuid::new_v4();
+            let due_date = Utc::now().date_naive() + chrono::Days::new(14);
+            sqlx::query(
+                r#"
+                INSERT INTO fee_allocations
+                    (fee_allocation_id, institution_id, student_id, fee_structure_id,
+                     academic_year, semester, total_amount, due_date, status)
+                VALUES ($1, $2, $3, $4, 2026, 99, $5, $6, 'Generated')
+                "#
+            )
+            .bind(alloc_id)
+            .bind(payload.institution_id)
+            .bind(payload.student_id)
+            .bind(fee_struct_id)
+            .bind(payload.amount)
+            .bind(due_date)
+            .execute(&mut *tx)
+            .await?;
+
+            // 4. Create Journal Entry
+            let journal_id = Uuid::new_v4();
+            let entry_date = Utc::now().date_naive();
+            let reference = format!("LIB_FINE_{}", payload.transaction_id);
+            let description = format!("Late return library fine for loan transaction {}", payload.transaction_id);
+
+            sqlx::query(
+                r#"
+                INSERT INTO journal_entries (
+                    journal_id, institution_id, entry_date, reference, description, status, posted_at
+                )
+                VALUES ($1, $2, $3, $4, $5, 'Posted', NOW())
+                "#
+            )
+            .bind(journal_id)
+            .bind(payload.institution_id)
+            .bind(entry_date)
+            .bind(&reference)
+            .bind(&description)
+            .execute(&mut *tx)
+            .await?;
+
+            // 5. Create Debit Item (A/R)
+            sqlx::query(
+                r#"
+                INSERT INTO journal_items (item_id, journal_id, account_id, debit_amount, credit_amount, narration)
+                VALUES (gen_random_uuid(), $1, $2, $3, 0.00, 'Debit A/R for Library Fine')
+                "#
+            )
+            .bind(journal_id)
+            .bind(ar_account_id)
+            .bind(payload.amount)
+            .execute(&mut *tx)
+            .await?;
+
+            // 6. Create Credit Item (Revenue)
+            sqlx::query(
+                r#"
+                INSERT INTO journal_items (item_id, journal_id, account_id, debit_amount, credit_amount, narration)
+                VALUES (gen_random_uuid(), $1, $2, 0.00, $3, 'Credit Revenue for Library Fine')
+                "#
+            )
+            .bind(journal_id)
+            .bind(rev_account_id)
+            .bind(payload.amount)
+            .execute(&mut *tx)
+            .await?;
+
+            // 7. Update Chart of Accounts balances
+            sqlx::query(
+                "UPDATE chart_of_accounts SET current_balance = current_balance + $1, updated_at = NOW() WHERE account_id = $2"
+            )
+            .bind(payload.amount)
+            .bind(ar_account_id)
+            .execute(&mut *tx)
+            .await?;
+
+            sqlx::query(
+                "UPDATE chart_of_accounts SET current_balance = current_balance + $1, updated_at = NOW() WHERE account_id = $2"
+            )
+            .bind(payload.amount)
+            .bind(rev_account_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // 8. Log Event
+            sqlx::query(
+                r#"
+                INSERT INTO event_log
+                    (event_id, institution_id, event_type, aggregate_id, aggregate_type, user_id, event_payload, event_version)
+                VALUES
+                    (gen_random_uuid(), $1, 'LibraryFineGenerated', $2, 'Library', NULL, $3, 1)
+                "#
+            )
+            .bind(payload.institution_id)
+            .bind(payload.transaction_id)
+            .bind(json!({
+                "student_id": payload.student_id,
+                "amount": payload.amount,
+                "fee_allocation_id": alloc_id,
+                "journal_entry_id": journal_id,
+                "saga": "LibraryFineSagaProcessed"
+            }))
+            .execute(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            info!("Saga: Completed library fine processing for transaction_id={}", payload.transaction_id);
+        }
+        DomainEvent::HostelChargeGenerated(payload) => {
+            info!("Saga: processing HostelChargeGenerated for allocation_id={}, student_id={}", payload.allocation_id, payload.student_id);
+
+            // 1. Fetch account IDs for Accounts Receivable (1201) and Tuition Fee Revenue (4001)
+            let ar_account_id: Uuid = sqlx::query_scalar(
+                "SELECT account_id FROM chart_of_accounts WHERE institution_id = $1 AND account_code = '1201'"
+            )
+            .bind(payload.institution_id)
+            .fetch_one(db)
+            .await?;
+
+            let rev_account_id: Uuid = sqlx::query_scalar(
+                "SELECT account_id FROM chart_of_accounts WHERE institution_id = $1 AND account_code = '4001'"
+            )
+            .bind(payload.institution_id)
+            .fetch_one(db)
+            .await?;
+
+            let mut tx = db.begin().await?;
+
+            // 2. Create Fee Structure for hostel stay fee
+            let fee_struct_id = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO fee_structures (fee_structure_id, institution_id, academic_year, branch_id, category, quota, semesters, total_amount)
+                 VALUES ($1, $2, 2026, NULL, NULL, NULL, '[]'::jsonb, $3)"
+            )
+            .bind(fee_struct_id)
+            .bind(payload.institution_id)
+            .bind(payload.amount)
+            .execute(&mut *tx)
+            .await?;
+
+            // 3. Create Fee Allocation
+            let alloc_id = Uuid::new_v4();
+            let due_date = Utc::now().date_naive() + chrono::Days::new(14);
+            sqlx::query(
+                r#"
+                INSERT INTO fee_allocations
+                    (fee_allocation_id, institution_id, student_id, fee_structure_id,
+                     academic_year, semester, total_amount, due_date, status)
+                VALUES ($1, $2, $3, $4, 2026, 98, $5, $6, 'Generated')
+                "#
+            )
+            .bind(alloc_id)
+            .bind(payload.institution_id)
+            .bind(payload.student_id)
+            .bind(fee_struct_id)
+            .bind(payload.amount)
+            .bind(due_date)
+            .execute(&mut *tx)
+            .await?;
+
+            // 4. Create Journal Entry
+            let journal_id = Uuid::new_v4();
+            let entry_date = Utc::now().date_naive();
+            let reference = format!("HOSTEL_FEE_{}", payload.allocation_id);
+            let description = format!("Hostel stay lodging fee for stay allocation {}", payload.allocation_id);
+
+            sqlx::query(
+                r#"
+                INSERT INTO journal_entries (
+                    journal_id, institution_id, entry_date, reference, description, status, posted_at
+                )
+                VALUES ($1, $2, $3, $4, $5, 'Posted', NOW())
+                "#
+            )
+            .bind(journal_id)
+            .bind(payload.institution_id)
+            .bind(entry_date)
+            .bind(&reference)
+            .bind(&description)
+            .execute(&mut *tx)
+            .await?;
+
+            // 5. Create Debit Item (A/R)
+            sqlx::query(
+                r#"
+                INSERT INTO journal_items (item_id, journal_id, account_id, debit_amount, credit_amount, narration)
+                VALUES (gen_random_uuid(), $1, $2, $3, 0.00, 'Debit A/R for Hostel Fee')
+                "#
+            )
+            .bind(journal_id)
+            .bind(ar_account_id)
+            .bind(payload.amount)
+            .execute(&mut *tx)
+            .await?;
+
+            // 6. Create Credit Item (Revenue)
+            sqlx::query(
+                r#"
+                INSERT INTO journal_items (item_id, journal_id, account_id, debit_amount, credit_amount, narration)
+                VALUES (gen_random_uuid(), $1, $2, 0.00, $3, 'Credit Revenue for Hostel Fee')
+                "#
+            )
+            .bind(journal_id)
+            .bind(rev_account_id)
+            .bind(payload.amount)
+            .execute(&mut *tx)
+            .await?;
+
+            // 7. Update Chart of Accounts balances
+            sqlx::query(
+                "UPDATE chart_of_accounts SET current_balance = current_balance + $1, updated_at = NOW() WHERE account_id = $2"
+            )
+            .bind(payload.amount)
+            .bind(ar_account_id)
+            .execute(&mut *tx)
+            .await?;
+
+            sqlx::query(
+                "UPDATE chart_of_accounts SET current_balance = current_balance + $1, updated_at = NOW() WHERE account_id = $2"
+            )
+            .bind(payload.amount)
+            .bind(rev_account_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // 8. Log Event
+            sqlx::query(
+                r#"
+                INSERT INTO event_log
+                    (event_id, institution_id, event_type, aggregate_id, aggregate_type, user_id, event_payload, event_version)
+                VALUES
+                    (gen_random_uuid(), $1, 'HostelChargeGenerated', $2, 'Hostel', NULL, $3, 1)
+                "#
+            )
+            .bind(payload.institution_id)
+            .bind(payload.allocation_id)
+            .bind(json!({
+                "student_id": payload.student_id,
+                "amount": payload.amount,
+                "fee_allocation_id": alloc_id,
+                "journal_entry_id": journal_id,
+                "saga": "HostelAllocationSagaProcessed"
+            }))
+            .execute(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            info!("Saga: Completed hostel stay fee processing for allocation_id={}", payload.allocation_id);
+        }
+        DomainEvent::TransportChargeGenerated(payload) => {
+            info!("Saga: processing TransportChargeGenerated for allocation_id={}, student_id={}", payload.allocation_id, payload.student_id);
+
+            // 1. Fetch account IDs for Accounts Receivable (1201) and Tuition Fee Revenue (4001)
+            let ar_account_id: Uuid = sqlx::query_scalar(
+                "SELECT account_id FROM chart_of_accounts WHERE institution_id = $1 AND account_code = '1201'"
+            )
+            .bind(payload.institution_id)
+            .fetch_one(db)
+            .await?;
+
+            let rev_account_id: Uuid = sqlx::query_scalar(
+                "SELECT account_id FROM chart_of_accounts WHERE institution_id = $1 AND account_code = '4001'"
+            )
+            .bind(payload.institution_id)
+            .fetch_one(db)
+            .await?;
+
+            let mut tx = db.begin().await?;
+
+            // 2. Create Fee Structure for transport fee
+            let fee_struct_id = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO fee_structures (fee_structure_id, institution_id, academic_year, branch_id, category, quota, semesters, total_amount)
+                 VALUES ($1, $2, 2026, NULL, NULL, NULL, '[]'::jsonb, $3)"
+            )
+            .bind(fee_struct_id)
+            .bind(payload.institution_id)
+            .bind(payload.amount)
+            .execute(&mut *tx)
+            .await?;
+
+            // 3. Create Fee Allocation (semester code 97)
+            let alloc_id = Uuid::new_v4();
+            let due_date = Utc::now().date_naive() + chrono::Days::new(14);
+            sqlx::query(
+                r#"
+                INSERT INTO fee_allocations
+                    (fee_allocation_id, institution_id, student_id, fee_structure_id,
+                     academic_year, semester, total_amount, due_date, status)
+                VALUES ($1, $2, $3, $4, 2026, 97, $5, $6, 'Generated')
+                "#
+            )
+            .bind(alloc_id)
+            .bind(payload.institution_id)
+            .bind(payload.student_id)
+            .bind(fee_struct_id)
+            .bind(payload.amount)
+            .bind(due_date)
+            .execute(&mut *tx)
+            .await?;
+
+            // 4. Create Journal Entry
+            let journal_id = Uuid::new_v4();
+            let entry_date = Utc::now().date_naive();
+            let reference = format!("TRANS_FEE_{}", payload.allocation_id);
+            let description = format!("Transport stop pickup fare fee for allocation {}", payload.allocation_id);
+
+            sqlx::query(
+                r#"
+                INSERT INTO journal_entries (
+                    journal_id, institution_id, entry_date, reference, description, status, posted_at
+                )
+                VALUES ($1, $2, $3, $4, $5, 'Posted', NOW())
+                "#
+            )
+            .bind(journal_id)
+            .bind(payload.institution_id)
+            .bind(entry_date)
+            .bind(&reference)
+            .bind(&description)
+            .execute(&mut *tx)
+            .await?;
+
+            // 5. Create Debit Item (A/R)
+            sqlx::query(
+                r#"
+                INSERT INTO journal_items (item_id, journal_id, account_id, debit_amount, credit_amount, narration)
+                VALUES (gen_random_uuid(), $1, $2, $3, 0.00, 'Debit A/R for Transport Fee')
+                "#
+            )
+            .bind(journal_id)
+            .bind(ar_account_id)
+            .bind(payload.amount)
+            .execute(&mut *tx)
+            .await?;
+
+            // 6. Create Credit Item (Revenue)
+            sqlx::query(
+                r#"
+                INSERT INTO journal_items (item_id, journal_id, account_id, debit_amount, credit_amount, narration)
+                VALUES (gen_random_uuid(), $1, $2, 0.00, $3, 'Credit Revenue for Transport Fee')
+                "#
+            )
+            .bind(journal_id)
+            .bind(rev_account_id)
+            .bind(payload.amount)
+            .execute(&mut *tx)
+            .await?;
+
+            // 7. Update Chart of Accounts balances
+            sqlx::query(
+                "UPDATE chart_of_accounts SET current_balance = current_balance + $1, updated_at = NOW() WHERE account_id = $2"
+            )
+            .bind(payload.amount)
+            .bind(ar_account_id)
+            .execute(&mut *tx)
+            .await?;
+
+            sqlx::query(
+                "UPDATE chart_of_accounts SET current_balance = current_balance + $1, updated_at = NOW() WHERE account_id = $2"
+            )
+            .bind(payload.amount)
+            .bind(rev_account_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // 8. Log Event
+            sqlx::query(
+                r#"
+                INSERT INTO event_log
+                    (event_id, institution_id, event_type, aggregate_id, aggregate_type, user_id, event_payload, event_version)
+                VALUES
+                    (gen_random_uuid(), $1, 'TransportChargeGenerated', $2, 'Transport', NULL, $3, 1)
+                "#
+            )
+            .bind(payload.institution_id)
+            .bind(payload.allocation_id)
+            .bind(json!({
+                "student_id": payload.student_id,
+                "amount": payload.amount,
+                "fee_allocation_id": alloc_id,
+                "journal_entry_id": journal_id,
+                "saga": "TransportAllocationSagaProcessed"
+            }))
+            .execute(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            info!("Saga: Completed transport stay fee processing for allocation_id={}", payload.allocation_id);
+        }
+        _ => {}
+    }
+    Ok(())
+}

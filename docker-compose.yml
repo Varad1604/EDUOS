@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: eduos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: eduos
+      POSTGRES_PASSWORD: eduos_dev_pass
+      POSTGRES_DB: eduos_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eduos -d eduos_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: eduos-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  eduos-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: eduos-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://eduos:eduos_dev_pass@postgres:5432/eduos_dev
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: super_secret_jwt_key_change_in_production_min_32_chars
+      JWT_ACCESS_EXPIRY_MINUTES: 15
+      JWT_REFRESH_EXPIRY_DAYS: 7
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8000
+      SERVER_REQUEST_TIMEOUT_SECS: 30
+      SERVER_MAX_BODY_SIZE_MB: 50
+      ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
+      LOG_LEVEL: debug
+      RUN_ENV: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/app/migrations
+
+volumes:
+  pgdata:
+  redisdata:
