@@ -135,34 +135,32 @@ export default function Placement() {
   function OverviewTab() {
     if (!stats) return <div className="loading-spinner" />;
     const cards = [
-      { icon: '🏢', label: 'Companies', value: stats.total_companies, color: '#6366f1' },
-      { icon: '📋', label: 'Total Drives', value: stats.total_drives, color: '#8b5cf6' },
-      { icon: '🟢', label: 'Open Drives', value: stats.open_drives, color: '#10b981' },
-      { icon: '📨', label: 'Applications', value: stats.total_applications, color: '#f59e0b' },
-      { icon: '🎁', label: 'Offers Made', value: stats.total_offers, color: '#3b82f6' },
-      { icon: '✅', label: 'Offers Accepted', value: stats.accepted_offers, color: '#22c55e' },
+      { label: 'Companies', value: stats.total_companies, color: '#1d4ed8' },
+      { label: 'Total Drives', value: stats.total_drives, color: '#1e40af' },
+      { label: 'Open Drives', value: stats.open_drives, color: '#15803d' },
+      { label: 'Applications', value: stats.total_applications, color: '#b45309' },
+      { label: 'Offers Made', value: stats.total_offers, color: '#1d4ed8' },
+      { label: 'Offers Accepted', value: stats.accepted_offers, color: '#15803d' },
     ];
     return (
       <div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 16, marginBottom: 32 }}>
           {cards.map(c => (
-            <div key={c.label} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 16, padding: '20px 24px', position: 'relative', overflow: 'hidden' }}>
-              <div style={{ fontSize: '2rem', marginBottom: 4 }}>{c.icon}</div>
+            <div key={c.label} style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 6, padding: '20px 24px', position: 'relative', overflow: 'hidden' }}>
               <div style={{ fontSize: '2rem', fontWeight: 800, color: c.color }}>{c.value}</div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{c.label}</div>
-              <div style={{ position: 'absolute', right: -12, bottom: -12, fontSize: '4rem', opacity: 0.06 }}>{c.icon}</div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{c.label}</div>
             </div>
           ))}
         </div>
 
         {(stats.avg_package_lpa || stats.highest_package_lpa) && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 32 }}>
-            <div style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', borderRadius: 16, padding: '24px 28px', color: '#fff' }}>
-              <div style={{ fontSize: '0.82rem', opacity: 0.8, marginBottom: 4 }}>Average Package</div>
+            <div style={{ background: 'var(--color-primary-light)', border: '1px solid var(--color-primary-border)', borderRadius: 6, padding: '24px 28px', color: 'var(--color-text-primary)' }}>
+              <div style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: 4 }}>Average Package</div>
               <div style={{ fontSize: '2.2rem', fontWeight: 800 }}>₹ {stats.avg_package_lpa?.toFixed(2)} LPA</div>
             </div>
-            <div style={{ background: 'linear-gradient(135deg, #f59e0b, #ef4444)', borderRadius: 16, padding: '24px 28px', color: '#fff' }}>
-              <div style={{ fontSize: '0.82rem', opacity: 0.8, marginBottom: 4 }}>Highest Package</div>
+            <div style={{ background: 'var(--color-success-bg)', border: '1px solid var(--color-success-border)', borderRadius: 6, padding: '24px 28px', color: 'var(--color-text-primary)' }}>
+              <div style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: 4 }}>Highest Package</div>
               <div style={{ fontSize: '2.2rem', fontWeight: 800 }}>₹ {stats.highest_package_lpa?.toFixed(2)} LPA</div>
             </div>
           </div>

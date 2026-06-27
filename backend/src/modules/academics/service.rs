@@ -102,6 +102,46 @@ pub async fn get_course(db: &PgPool, claims: &Claims, course_id: Uuid) -> Result
     .ok_or_else(|| AppError::NotFound(format!("Course {} not found", course_id)))
 }
 
+pub async fn update_course(
+    db: &PgPool,
+    claims: &Claims,
+    course_id: Uuid,
+    req: CreateCourseRequest,
+) -> Result<Course, AppError> {
+    let course_type = req.course_type.clone();
+    if !["Theory","Practical","Project","Seminar"].contains(&course_type.as_str()) {
+        return Err(AppError::BadRequest(format!("Invalid course_type: {}", course_type)));
+    }
+
+    let course = sqlx::query_as::<_, Course>(
+        r#"
+        UPDATE courses
+        SET curriculum_id = $1, course_code = $2, course_name = $3,
+            credits = $4, course_type = $5, semester = $6, min_marks = $7, max_marks = $8
+        WHERE course_id = $9 AND institution_id = $10 AND soft_deleted = false
+        RETURNING
+            course_id, institution_id, curriculum_id, course_code, course_name,
+            credits::TEXT AS credits, course_type, semester, min_marks, max_marks,
+            internal_max, external_max, course_outcomes, weekly_hours, created_at, soft_deleted
+        "#,
+    )
+    .bind(req.curriculum_id)
+    .bind(&req.course_code)
+    .bind(&req.course_name)
+    .bind(req.credits)
+    .bind(&req.course_type)
+    .bind(req.semester)
+    .bind(req.min_marks.unwrap_or(35))
+    .bind(req.max_marks.unwrap_or(100))
+    .bind(course_id)
+    .bind(claims.institution_id)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(course)
+}
+
 pub async fn create_class(db: &PgPool, claims: &Claims, req: CreateClassRequest) -> Result<Class, AppError> {
     sqlx::query_as::<_, Class>(
         r#"

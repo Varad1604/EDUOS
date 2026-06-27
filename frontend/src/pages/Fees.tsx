@@ -219,8 +219,8 @@ export default function Fees() {
 
         {/* Student notice */}
         {isStudent && (
-          <div style={{ display: 'flex', gap: '0.75rem', padding: '0.75rem 1rem', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 8, marginBottom: '1.5rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-            <span>💳</span> You can view your fee statements and make payments. For fee waivers or corrections, contact the Fee Manager.
+          <div className="info-panel" style={{ marginBottom: '1.5rem' }}>
+            You can view your fee statements and make payments. For fee waivers or corrections, contact the Fee Manager.
           </div>
         )}
 
@@ -392,7 +392,7 @@ export default function Fees() {
                                   </button>
                                 )}
                                 <button className="btn btn-secondary btn-sm" style={{ padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: '2px' }} disabled={pdfGenerating} onClick={() => handleDownloadInvoice(a)}>
-                                  {pdfGenerating ? '...' : '📄 Invoice'}
+                                  {pdfGenerating ? '...' : 'Invoice'}
                                 </button>
                               </div>
                             </td>
@@ -437,7 +437,7 @@ export default function Fees() {
                                   disabled={pdfGenerating}
                                   onClick={() => handleDownloadReceipt(p)}
                                 >
-                                  {pdfGenerating ? '...' : '📥 Receipt'}
+                                  {pdfGenerating ? '...' : 'Receipt'}
                                 </button>
                               </td>
                             </tr>
