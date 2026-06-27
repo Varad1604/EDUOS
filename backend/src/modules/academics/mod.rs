@@ -2,7 +2,7 @@ pub mod handlers;
 pub mod models;
 pub mod service;
 
-use axum::{routing::{get, post}, Router};
+use axum::{routing::{get, post, put}, Router};
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -10,6 +10,7 @@ pub fn router() -> Router<AppState> {
         .route("/courses",                              post(handlers::create_course))
         .route("/courses",                              get(handlers::list_courses))
         .route("/courses/:id",                          get(handlers::get_course))
+        .route("/courses/:id",                          put(handlers::update_course))
         .route("/classes",                              post(handlers::create_class))
         .route("/classes",                              get(handlers::list_classes))
         .route("/faculty/:id/courses",                  post(handlers::allocate_faculty))

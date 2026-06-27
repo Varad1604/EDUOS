@@ -44,6 +44,7 @@ export const academicsApi = {
   courses: {
     list:   (params?: Record<string, unknown>) => api.get('/courses', { params }),
     create: (data: unknown) => api.post('/courses', data),
+    update: (id: string, data: unknown) => api.put(`/courses/${id}`, data),
   },
   classes: {
     list:   () => api.get('/classes'),

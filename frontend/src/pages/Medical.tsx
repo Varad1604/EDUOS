@@ -98,23 +98,21 @@ export default function Medical() {
   /* ── Overview ─────────────────────────────────────────────────────────────── */
   function OverviewTab() {
     const cards = [
-      { icon: '🏥', label: 'Visits Today',     value: stats?.total_visits_today  ?? 0, color: '#6366f1' },
-      { icon: '📋', label: 'This Month',        value: stats?.total_visits_month  ?? 0, color: '#8b5cf6' },
-      { icon: '🔴', label: 'Open Cases',         value: stats?.open_visits         ?? 0, color: '#f59e0b' },
-      { icon: '💊', label: 'Inventory Items',   value: stats?.total_inventory_items ?? 0, color: '#10b981' },
-      { icon: '⚠️', label: 'Low Stock',          value: stats?.low_stock_items     ?? 0, color: '#ef4444' },
-      { icon: '📄', label: 'Sick Leaves',        value: stats?.sick_leaves_issued  ?? 0, color: '#3b82f6' },
+      { label: 'Visits Today',     value: stats?.total_visits_today  ?? 0, color: '#1d4ed8' },
+      { label: 'This Month',        value: stats?.total_visits_month  ?? 0, color: '#1e40af' },
+      { label: 'Open Cases',         value: stats?.open_visits         ?? 0, color: '#b45309' },
+      { label: 'Inventory Items',   value: stats?.total_inventory_items ?? 0, color: '#15803d' },
+      { label: 'Low Stock',          value: stats?.low_stock_items     ?? 0, color: '#b91c1c' },
+      { label: 'Sick Leaves',        value: stats?.sick_leaves_issued  ?? 0, color: '#1e40af' },
     ];
 
     return (
       <div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(175px, 1fr))', gap: 16, marginBottom: 32 }}>
           {cards.map(c => (
-            <div key={c.label} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 16, padding: '20px 24px', position: 'relative', overflow: 'hidden' }}>
-              <div style={{ fontSize: '2rem', marginBottom: 4 }}>{c.icon}</div>
+            <div key={c.label} style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 6, padding: '20px 24px', position: 'relative', overflow: 'hidden' }}>
               <div style={{ fontSize: '2rem', fontWeight: 800, color: c.color }}>{c.value}</div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{c.label}</div>
-              <div style={{ position: 'absolute', right: -12, bottom: -12, fontSize: '4rem', opacity: 0.06 }}>{c.icon}</div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{c.label}</div>
             </div>
           ))}
         </div>

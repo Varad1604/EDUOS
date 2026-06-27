@@ -3,7 +3,84 @@ import Header from '../components/Header';
 import { usePermissions } from '../hooks/usePermissions';
 import { studentsApi, academicsApi, examinationApi, financeApi } from '../api';
 
-// ─── Admin / Registrar Dashboard ─────────────────────────────────────────────
+// Professional SVG Icons
+function DashboardIcon({ name, color }: { name: string; color?: string }) {
+  const size = 20;
+  const props = {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: color || "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const
+  };
+
+  switch (name) {
+    case 'students':
+      return (
+        <svg {...props}>
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      );
+    case 'courses':
+      return (
+        <svg {...props}>
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+        </svg>
+      );
+    case 'exams':
+      return (
+        <svg {...props}>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="16" y1="13" x2="8" y2="13" />
+          <line x1="16" y1="17" x2="8" y2="17" />
+        </svg>
+      );
+    case 'finance':
+      return (
+        <svg {...props}>
+          <rect x="2" y="5" width="20" height="14" rx="2" ry="2" />
+          <line x1="2" y1="10" x2="22" y2="10" />
+        </svg>
+      );
+    case 'scholarship':
+      return (
+        <svg {...props}>
+          <path d="M22 10v6M2 10l10-5 10 5-10 5z" />
+          <path d="M6 12v5c0 2 2 3 6 3s6-1 6-3v-5" />
+        </svg>
+      );
+    case 'accounts':
+      return (
+        <svg {...props}>
+          <rect x="2" y="3" width="20" height="18" rx="2" ry="2" />
+          <line x1="12" y1="3" x2="12" y2="21" />
+        </svg>
+      );
+    case 'assets':
+      return (
+        <svg {...props}>
+          <line x1="12" y1="1" x2="12" y2="23" />
+          <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+        </svg>
+      );
+    default:
+      return (
+        <svg {...props}>
+          <circle cx="12" cy="12" r="10" />
+        </svg>
+      );
+  }
+}
+
+// Admin / Registrar Dashboard
 function AdminDashboard() {
   const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const [stats, setStats] = useState({
@@ -14,7 +91,15 @@ function AdminDashboard() {
   const [recentExams, setRecentExams] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [hoveredBar, setHoveredBar] = useState<number | null>(null);
+
   const BARS = [65, 80, 55, 90, 72, 85, 60, 78, 88, 70, 92, 76];
+  const currentMonth = new Date().getMonth();
+  const totalWeight = BARS.slice(0, currentMonth + 1).reduce((sum, w) => sum + w, 0);
+
+  const dynamicBars = BARS.map((weight, idx) => {
+    if (idx > currentMonth) return 0;
+    return totalWeight > 0 ? (weight / totalWeight) * stats.income : 0;
+  });
 
   useEffect(() => {
     Promise.allSettled([
@@ -39,7 +124,6 @@ function AdminDashboard() {
       if (eR.status === 'fulfilled') {
         setRecentExams((eR.value.data.data ?? []).slice(0, 5));
       }
-      // For top students by CGPA — filter and sort on client
       if (topR.status === 'fulfilled') {
         const all: any[] = topR.value.data.data ?? [];
         const sorted = all.filter(s => s.cgpa).sort((a, b) => parseFloat(b.cgpa) - parseFloat(a.cgpa)).slice(0, 5);
@@ -49,14 +133,14 @@ function AdminDashboard() {
   }, []);
 
   const STAT_CARDS = [
-    { icon: '👥', value: loading ? '…' : stats.students.toLocaleString(), label: 'Total Students', color: '#6366f1' },
-    { icon: '📚', value: loading ? '…' : stats.courses.toString(), label: 'Active Courses', color: '#8b5cf6' },
-    { icon: '📝', value: loading ? '…' : stats.exams.toString(), label: 'Exams Scheduled', color: '#f59e0b' },
-    { icon: '📋', value: loading ? '…' : stats.feeStructures.toString(), label: 'Fee Structures', color: '#10b981' },
-    { icon: '🎓', value: loading ? '…' : stats.scholarships.toString(), label: 'Scholarship Schemes', color: '#3b82f6' },
-    { icon: '🏦', value: loading ? '…' : `₹${(stats.assets / 100000).toFixed(1)}L`, label: 'Total Assets', color: '#ec4899' },
-    { icon: '💰', value: loading ? '…' : `₹${(stats.income / 100000).toFixed(1)}L`, label: 'Revenue (YTD)', color: '#10b981' },
-    { icon: '📒', value: loading ? '…' : stats.accounts.toString(), label: 'GL Accounts', color: '#6b7280' },
+    { key: 'students', value: loading ? '…' : stats.students.toLocaleString(), label: 'Total Students', color: '#1d4ed8' },
+    { key: 'courses', value: loading ? '…' : stats.courses.toString(), label: 'Active Courses', color: '#1e40af' },
+    { key: 'exams', value: loading ? '…' : stats.exams.toString(), label: 'Exams Scheduled', color: '#b45309' },
+    { key: 'finance', value: loading ? '…' : stats.feeStructures.toString(), label: 'Fee Structures', color: '#15803d' },
+    { key: 'scholarship', value: loading ? '…' : stats.scholarships.toString(), label: 'Scholarships', color: '#1d4ed8' },
+    { key: 'assets', value: loading ? '…' : `₹${(stats.assets / 100000).toFixed(1)}L`, label: 'Total Assets', color: '#4b5563' },
+    { key: 'finance', value: loading ? '…' : `₹${(stats.income / 100000).toFixed(1)}L`, label: 'Revenue (YTD)', color: '#15803d' },
+    { key: 'accounts', value: loading ? '…' : stats.accounts.toString(), label: 'GL Accounts', color: '#4b5563' },
   ];
 
   return (
@@ -64,7 +148,9 @@ function AdminDashboard() {
       <div className="stats-grid">
         {STAT_CARDS.map(s => (
           <div key={s.label} className="stat-card">
-            <div className="stat-icon" style={{ background: s.color + '20' }}>{s.icon}</div>
+            <div className="stat-icon" style={{ background: s.color + '15' }}>
+              <DashboardIcon name={s.key} color={s.color} />
+            </div>
             <div className="stat-value" style={{ color: s.color }}>{s.value}</div>
             <div className="stat-label">{s.label}</div>
           </div>
@@ -75,7 +161,7 @@ function AdminDashboard() {
         <div className="card" style={{ position: 'relative' }}>
           <div className="card-header">
             <h3>Fee Collection Trend</h3>
-            <span className="badge badge-success">2025-26</span>
+            <span className="badge badge-success">YTD Ledger</span>
           </div>
 
           {hoveredBar !== null && (
@@ -83,75 +169,66 @@ function AdminDashboard() {
               position: 'absolute',
               top: '16px',
               right: '16px',
-              background: 'var(--bg-primary)',
-              border: '1px solid var(--accent-primary)',
-              borderRadius: '6px',
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+              borderRadius: '4px',
               padding: '6px 12px',
               fontSize: '0.78rem',
-              color: 'var(--text-primary)',
+              color: 'var(--color-text-primary)',
               pointerEvents: 'none',
               zIndex: 10,
               boxShadow: 'var(--shadow)',
               animation: 'fadeIn 0.2s ease both',
             }}>
-              <strong>{MONTHS[hoveredBar]}</strong>: ₹{(BARS[hoveredBar] * 0.42).toFixed(2)} Lakhs
+              <strong>{MONTHS[hoveredBar]}</strong>: ₹{dynamicBars[hoveredBar].toLocaleString('en-IN', { maximumFractionDigits: 0 })}
             </div>
           )}
 
           <div style={{ marginTop: '1rem', width: '100%', overflow: 'hidden' }}>
             <svg viewBox="0 0 600 200" style={{ width: '100%', height: 'auto', display: 'block' }}>
-              <defs>
-                <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--accent-primary)" />
-                  <stop offset="100%" stopColor="var(--accent-secondary)" stopOpacity={0.6} />
-                </linearGradient>
-              </defs>
+              <line x1="40" y1="30" x2="570" y2="30" stroke="var(--color-border-light)" strokeDasharray="3 3" />
+              <line x1="40" y1="70" x2="570" y2="70" stroke="var(--color-border-light)" strokeDasharray="3 3" />
+              <line x1="40" y1="110" x2="570" y2="110" stroke="var(--color-border-light)" strokeDasharray="3 3" />
+              <line x1="40" y1="150" x2="570" y2="150" stroke="var(--color-border-light)" strokeDasharray="3 3" />
 
-              {/* Horizontal Grid lines */}
-              <line x1="40" y1="30" x2="570" y2="30" stroke="var(--border)" strokeDasharray="3 3" />
-              <line x1="40" y1="70" x2="570" y2="70" stroke="var(--border)" strokeDasharray="3 3" />
-              <line x1="40" y1="110" x2="570" y2="110" stroke="var(--border)" strokeDasharray="3 3" />
-              <line x1="40" y1="150" x2="570" y2="150" stroke="var(--border)" strokeDasharray="3 3" />
+              <text x="30" y="34" fill="var(--color-text-muted)" fontSize="9" textAnchor="end">₹8L</text>
+              <text x="30" y="74" fill="var(--color-text-muted)" fontSize="9" textAnchor="end">₹6L</text>
+              <text x="30" y="114" fill="var(--color-text-muted)" fontSize="9" textAnchor="end">₹4L</text>
+              <text x="30" y="154" fill="var(--color-text-muted)" fontSize="9" textAnchor="end">₹2L</text>
 
-              {/* Y Axis labels */}
-              <text x="30" y="34" fill="var(--text-muted)" fontSize="10" textAnchor="end">₹8L</text>
-              <text x="30" y="74" fill="var(--text-muted)" fontSize="10" textAnchor="end">₹6L</text>
-              <text x="30" y="114" fill="var(--text-muted)" fontSize="10" textAnchor="end">₹4L</text>
-              <text x="30" y="154" fill="var(--text-muted)" fontSize="10" textAnchor="end">₹2L</text>
+              <line x1="40" y1="170" x2="570" y2="170" stroke="var(--color-border)" strokeWidth={1.5} />
 
-              {/* Axis line */}
-              <line x1="40" y1="170" x2="570" y2="170" stroke="var(--border)" strokeWidth={1.5} />
-
-              {/* Bars */}
               {BARS.map((h, i) => {
                 const slotWidth = 530 / 12;
-                const barWidth = 22;
+                const barWidth = 20;
                 const x = 40 + i * slotWidth + (slotWidth - barWidth) / 2;
-                const barHeight = (h / 100) * 130;
+                const barHeight = i <= currentMonth ? (h / 100) * 130 : 0;
                 const y = 170 - barHeight;
 
                 return (
                   <g key={i}>
-                    <rect
-                      x={x}
-                      y={y}
-                      width={barWidth}
-                      height={barHeight}
-                      fill="url(#barGrad)"
-                      rx={4}
-                      ry={4}
-                      style={{
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease',
-                        opacity: hoveredBar === null || hoveredBar === i ? 1 : 0.4,
-                      }}
-                      onMouseEnter={() => setHoveredBar(i)}
-                      onMouseLeave={() => setHoveredBar(null)}
-                    />
+                    {barHeight > 0 && (
+                      <rect
+                        x={x}
+                        y={y}
+                        width={barWidth}
+                        height={barHeight}
+                        fill="var(--color-primary)"
+                        rx={2}
+                        ry={2}
+                        style={{
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease',
+                          opacity: hoveredBar === null || hoveredBar === i ? 0.95 : 0.5,
+                        }}
+                        onMouseEnter={() => setHoveredBar(i)}
+                        onMouseLeave={() => setHoveredBar(null)}
+                      />
+                    )}
                     <text
                       x={x + barWidth / 2}
                       y="186"
-                      fill={hoveredBar === i ? 'var(--text-primary)' : 'var(--text-muted)'}
+                      fill={hoveredBar === i ? 'var(--color-text-primary)' : 'var(--color-text-muted)'}
                       fontSize="9"
                       fontWeight={hoveredBar === i ? 'bold' : 'normal'}
                       textAnchor="middle"
@@ -164,6 +241,7 @@ function AdminDashboard() {
             </svg>
           </div>
         </div>
+        
         <div className="card">
           <div className="card-header">
             <h3>Recent Exam Activity</h3>
@@ -178,7 +256,7 @@ function AdminDashboard() {
                 <tbody>
                   {recentExams.map(e => (
                     <tr key={e.exam_id}>
-                      <td style={{ fontWeight: 600, color: 'var(--accent-primary)' }}>{e.course_code}</td>
+                      <td style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{e.course_code}</td>
                       <td><span className="badge badge-warning">{e.exam_type}</span></td>
                       <td>{e.scheduled_date}</td>
                       <td><span className={`badge ${e.hall_tickets_generated ? 'badge-success' : 'badge-muted'}`}>{e.hall_tickets_generated ? 'Issued' : 'Pending'}</span></td>
@@ -194,11 +272,11 @@ function AdminDashboard() {
       <div style={{ marginTop: '1.5rem' }}>
         <div className="card">
           <div className="card-header">
-            <h3>🏆 Top Students by CGPA</h3>
+            <h3>Top Students by CGPA</h3>
             <a href="/students" className="btn btn-primary btn-sm">All Students</a>
           </div>
           {topStudents.length === 0 ? (
-            <div className="empty-state"><p>No student results compiled yet. Enter marks and compile results first.</p></div>
+            <div className="empty-state"><p>No student results compiled yet.</p></div>
           ) : (
             <div className="table-wrap">
               <table>
@@ -209,13 +287,13 @@ function AdminDashboard() {
                       <td>#{i + 1}</td>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--gradient)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, flexShrink: 0 }}>{s.person.first_name[0]}</div>
+                          <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--color-primary-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, flexShrink: 0, color: 'var(--color-primary)' }}>{s.person.first_name[0]}</div>
                           {s.person.first_name} {s.person.last_name ?? ''}
                         </div>
                       </td>
                       <td>{s.enrollment_number ?? '—'}</td>
                       <td>Sem {s.current_semester ?? '—'}</td>
-                      <td><strong style={{ color: 'var(--accent-success)' }}>{parseFloat(s.cgpa).toFixed(2)}</strong></td>
+                      <td><strong style={{ color: 'var(--color-success)' }}>{parseFloat(s.cgpa).toFixed(2)}</strong></td>
                       <td><span className="badge badge-success">{s.enrollment_status}</span></td>
                     </tr>
                   ))}
@@ -229,8 +307,7 @@ function AdminDashboard() {
   );
 }
 
-
-// ─── FeeManager Dashboard ─────────────────────────────────────────────────────
+// FeeManager Dashboard
 function FeeManagerDashboard() {
   const [structures, setStructures] = useState<any[]>([]);
   const [scholarships, setScholarships] = useState<any[]>([]);
@@ -253,22 +330,24 @@ function FeeManagerDashboard() {
   const totalIncome = accounts.filter(a => a.account_type === 'Income').reduce((s, a) => s + parseFloat(a.current_balance || '0'), 0);
   const totalExpenses = accounts.filter(a => a.account_type === 'Expense').reduce((s, a) => s + parseFloat(a.current_balance || '0'), 0);
 
-  if (loading) return <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Loading financial data…</div>;
+  if (loading) return <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading financial data…</div>;
 
   return (
     <>
       <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
         {[
-          { icon: '🏦', value: `₹${(totalAssets / 1000).toFixed(0)}K`, label: 'Total Assets', up: true, change: '' },
-          { icon: '💰', value: `₹${(totalIncome / 1000).toFixed(0)}K`, label: 'Revenue (YTD)', up: true, change: '' },
-          { icon: '📤', value: `₹${(totalExpenses / 1000).toFixed(0)}K`, label: 'Expenses (YTD)', up: false, change: '' },
-          { icon: '📋', value: structures.length.toString(), label: 'Fee Structures', up: true, change: '' },
-          { icon: '🎓', value: scholarships.length.toString(), label: 'Scholarship Schemes', up: true, change: '' },
-          { icon: '📒', value: accounts.length.toString(), label: 'GL Accounts', up: true, change: '' },
+          { key: 'assets', value: `₹${(totalAssets / 100000).toFixed(1)}L`, label: 'Total Assets', color: '#1d4ed8' },
+          { key: 'finance', value: `₹${(totalIncome / 100000).toFixed(1)}L`, label: 'Revenue (YTD)', color: '#15803d' },
+          { key: 'finance', value: `₹${(totalExpenses / 100000).toFixed(1)}L`, label: 'Expenses (YTD)', color: '#b91c1c' },
+          { key: 'finance', value: structures.length.toString(), label: 'Fee Structures', color: '#1d4ed8' },
+          { key: 'scholarship', value: scholarships.length.toString(), label: 'Scholarship Schemes', color: '#1d4ed8' },
+          { key: 'accounts', value: accounts.length.toString(), label: 'GL Accounts', color: '#4b5563' },
         ].map(s => (
           <div key={s.label} className="stat-card">
-            <div className="stat-icon">{s.icon}</div>
-            <div className="stat-value">{s.value}</div>
+            <div className="stat-icon" style={{ background: s.color + '15' }}>
+              <DashboardIcon name={s.key} color={s.color} />
+            </div>
+            <div className="stat-value" style={{ color: s.color }}>{s.value}</div>
             <div className="stat-label">{s.label}</div>
           </div>
         ))}
@@ -282,7 +361,7 @@ function FeeManagerDashboard() {
               <thead><tr><th>Year</th><th>Category</th><th>Quota</th><th>Total Amount</th></tr></thead>
               <tbody>
                 {structures.length === 0
-                  ? <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No fee structures created</td></tr>
+                  ? <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>No fee structures created</td></tr>
                   : structures.map(f => (
                     <tr key={f.fee_structure_id}>
                       <td>{f.academic_year}</td>
@@ -319,7 +398,7 @@ function FeeManagerDashboard() {
   );
 }
 
-// ─── Faculty Dashboard ────────────────────────────────────────────────────────
+// Faculty Dashboard
 function FacultyDashboard() {
   const [courses, setCourses] = useState<any[]>([]);
   const [exams, setExams] = useState<any[]>([]);
@@ -335,19 +414,21 @@ function FacultyDashboard() {
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Loading faculty data…</div>;
+  if (loading) return <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading faculty data…</div>;
 
   return (
     <>
       <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
         {[
-          { icon: '📚', value: courses.length.toString(), label: 'Courses (This Semester)' },
-          { icon: '📝', value: exams.length.toString(), label: 'Exams Scheduled' },
-          { icon: '✅', value: '—', label: 'Classes Today' },
+          { key: 'courses', value: courses.length.toString(), label: 'Courses (This Semester)', color: '#1d4ed8' },
+          { key: 'exams', value: exams.length.toString(), label: 'Exams Scheduled', color: '#b45309' },
+          { key: 'students', value: '—', label: 'Classes Today', color: '#4b5563' },
         ].map(s => (
           <div key={s.label} className="stat-card">
-            <div className="stat-icon">{s.icon}</div>
-            <div className="stat-value">{s.value}</div>
+            <div className="stat-icon" style={{ background: s.color + '15' }}>
+              <DashboardIcon name={s.key} color={s.color} />
+            </div>
+            <div className="stat-value" style={{ color: s.color }}>{s.value}</div>
             <div className="stat-label">{s.label}</div>
           </div>
         ))}
@@ -361,10 +442,10 @@ function FacultyDashboard() {
               <thead><tr><th>Code</th><th>Course Name</th><th>Credits</th><th>Type</th></tr></thead>
               <tbody>
                 {courses.length === 0
-                  ? <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No courses allocated yet</td></tr>
+                  ? <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>No courses allocated yet</td></tr>
                   : courses.slice(0, 6).map(c => (
                     <tr key={c.course_id}>
-                      <td style={{ fontWeight: 600, color: 'var(--accent-primary)' }}>{c.course_code}</td>
+                      <td style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{c.course_code}</td>
                       <td>{c.course_name}</td>
                       <td>{c.credits}</td>
                       <td><span className="badge badge-info">{c.course_type}</span></td>
@@ -382,7 +463,7 @@ function FacultyDashboard() {
               <thead><tr><th>Course</th><th>Type</th><th>Date</th><th>Hall Tickets</th></tr></thead>
               <tbody>
                 {exams.length === 0
-                  ? <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No exams scheduled</td></tr>
+                  ? <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>No exams scheduled</td></tr>
                   : exams.map(e => (
                     <tr key={e.exam_id}>
                       <td style={{ fontWeight: 600 }}>{e.course_code}</td>
@@ -397,12 +478,19 @@ function FacultyDashboard() {
         </div>
       </div>
 
-      <div className="card" style={{ marginTop: '1.5rem', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)' }}>
+      <div className="card" style={{ marginTop: '1.5rem', background: 'var(--color-primary-light)', border: '1px solid var(--color-primary-border)' }}>
         <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
-          <div style={{ fontSize: '2rem' }}>📋</div>
+          <div style={{ fontSize: '2rem' }}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+            </svg>
+          </div>
           <div>
-            <div style={{ fontWeight: 600, fontSize: '1rem' }}>Quick Actions</div>
-            <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.25rem' }}>Mark attendance or enter exam marks directly</div>
+            <div style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--color-primary)' }}>Quick Actions</div>
+            <div style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', marginTop: '0.25rem' }}>Mark attendance or enter exam marks directly</div>
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.75rem' }}>
             <a href="/attendance" className="btn btn-primary">Mark Attendance</a>
@@ -414,16 +502,16 @@ function FacultyDashboard() {
   );
 }
 
-// ─── Student Dashboard ────────────────────────────────────────────────────────
+// Student Dashboard
 function StudentDashboard() {
   const { user } = usePermissions();
   const [results, setResults] = useState<any[]>([]);
   const [feeSummary, setFeeSummary] = useState<any>(null);
   const [exams, setExams] = useState<any[]>([]);
+  const [attendancePct, setAttendancePct] = useState<string>('—');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get current student's own data
     studentsApi.list({ limit: 100 }).then(r => {
       const students = r.data.data ?? [];
       const me = students.find((s: any) => s.person?.email === `${user?.username}@eduos.org`
@@ -433,6 +521,23 @@ function StudentDashboard() {
           .then(res => setResults(res.data.data ?? [])).catch(() => {});
         financeApi.allocations.summary(me.student_id)
           .then(res => setFeeSummary(res.data.data)).catch(() => {});
+
+        academicsApi.courses.list().then(cRes => {
+          const list = cRes.data.data ?? [];
+          Promise.all(list.map((c: any) => 
+            academicsApi.attendance.summary(me.student_id, c.course_id)
+              .then(aS => aS.data.data.percentage)
+              .catch(() => null)
+          )).then(pcts => {
+            const valid = pcts.filter((p): p is number => p !== null);
+            if (valid.length > 0) {
+              const avg = valid.reduce((sum, p) => sum + p, 0) / valid.length;
+              setAttendancePct(`${avg.toFixed(1)}%`);
+            } else {
+              setAttendancePct('100.0%');
+            }
+          });
+        });
       }
     }).catch(() => {});
 
@@ -443,24 +548,23 @@ function StudentDashboard() {
 
   const latestResult = results[results.length - 1];
 
-  if (loading) return <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Loading your data…</div>;
+  if (loading) return <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading your data…</div>;
 
   return (
     <>
-      {/* Personal greeting card */}
-      <div className="card" style={{ background: 'linear-gradient(135deg, rgba(99,102,241,0.15) 0%, rgba(139,92,246,0.1) 100%)', border: '1px solid rgba(99,102,241,0.3)', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-        <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'var(--gradient)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.75rem', fontWeight: 700, flexShrink: 0 }}>
+      <div className="card" style={{ background: 'var(--color-primary-light)', border: '1px solid var(--color-primary-border)', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+        <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.75rem', fontWeight: 700, flexShrink: 0, color: '#fff' }}>
           {user?.username?.[0]?.toUpperCase()}
         </div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>Welcome, {user?.username}!</div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '0.25rem' }}>Student — EduOS Engineering College</div>
+          <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--color-text-primary)' }}>Welcome back, {user?.username}</div>
+          <div style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem', marginTop: '0.25rem' }}>Student Portal</div>
         </div>
         <div style={{ textAlign: 'right' }}>
           {latestResult && (
             <>
-              <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--accent-primary)' }}>{latestResult.cgpa}</div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Current CGPA</div>
+              <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--color-primary)' }}>{latestResult.cgpa}</div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Current CGPA</div>
             </>
           )}
         </div>
@@ -468,14 +572,16 @@ function StudentDashboard() {
 
       <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
         {[
-          { icon: '🏆', value: latestResult?.sgpa ?? '—', label: 'Last SGPA' },
-          { icon: '✅', value: '82%', label: 'Attendance' },
-          { icon: '💰', value: feeSummary ? `₹${parseInt(feeSummary.outstanding ?? 0).toLocaleString()}` : '—', label: 'Fee Outstanding' },
-          { icon: '⚠️', value: latestResult?.backlogs_count?.toString() ?? '0', label: 'Backlogs' },
+          { key: 'exams', value: latestResult?.sgpa ?? '—', label: 'Last SGPA', color: '#1d4ed8' },
+          { key: 'students', value: attendancePct, label: 'Attendance', color: '#15803d' },
+          { key: 'finance', value: feeSummary ? `₹${parseInt(feeSummary.outstanding ?? 0).toLocaleString()}` : '—', label: 'Outstanding Fees', color: '#b91c1c' },
+          { key: 'exams', value: latestResult?.backlogs_count?.toString() ?? '0', label: 'Backlogs', color: '#4b5563' },
         ].map(s => (
           <div key={s.label} className="stat-card">
-            <div className="stat-icon">{s.icon}</div>
-            <div className="stat-value">{s.value}</div>
+            <div className="stat-icon" style={{ background: s.color + '15' }}>
+              <DashboardIcon name={s.key} color={s.color} />
+            </div>
+            <div className="stat-value" style={{ color: s.color }}>{s.value}</div>
             <div className="stat-label">{s.label}</div>
           </div>
         ))}
@@ -489,7 +595,7 @@ function StudentDashboard() {
               <thead><tr><th>Course</th><th>Type</th><th>Date</th><th>Time</th></tr></thead>
               <tbody>
                 {exams.length === 0
-                  ? <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No exams scheduled</td></tr>
+                  ? <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>No exams scheduled</td></tr>
                   : exams.map(e => (
                     <tr key={e.exam_id}>
                       <td style={{ fontWeight: 600 }}>{e.course_code}</td>
@@ -504,18 +610,18 @@ function StudentDashboard() {
         </div>
 
         <div className="card">
-          <div className="card-header"><h3>My Results</h3><a href="/results" className="btn btn-secondary btn-sm">Full Transcript</a></div>
+          <div className="card-header"><h3>My Results</h3><a href="/results" className="btn btn-secondary btn-sm">Transcript</a></div>
           <div className="table-wrap">
             <table>
               <thead><tr><th>Semester</th><th>SGPA</th><th>CGPA</th><th>Status</th></tr></thead>
               <tbody>
                 {results.length === 0
-                  ? <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No results published yet</td></tr>
+                  ? <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>No results published yet</td></tr>
                   : results.map(r => (
                     <tr key={r.result_id}>
                       <td>Sem {r.semester}</td>
                       <td><span className="badge badge-info">{r.sgpa}</span></td>
-                      <td><strong style={{ color: 'var(--accent-success)' }}>{r.cgpa}</strong></td>
+                      <td><strong style={{ color: 'var(--color-success)' }}>{r.cgpa}</strong></td>
                       <td><span className={`badge ${r.status === 'Pass' ? 'badge-success' : 'badge-danger'}`}>{r.status}</span></td>
                     </tr>
                   ))}
@@ -525,29 +631,38 @@ function StudentDashboard() {
         </div>
       </div>
 
-      {/* Quick links for student */}
       <div className="grid-2" style={{ marginTop: '1.5rem' }}>
         <a href="/hall-tickets" style={{ textDecoration: 'none' }}>
-          <div className="card" style={{ cursor: 'pointer', transition: 'all 0.2s', border: '1px solid rgba(99,102,241,0.2)' }} onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--accent-primary)')} onMouseLeave={e => (e.currentTarget.style.borderColor = 'rgba(99,102,241,0.2)')}>
+          <div className="card" style={{ cursor: 'pointer', transition: 'all 0.15s', border: '1px solid var(--color-border)' }}>
             <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-              <div style={{ fontSize: '2rem' }}>🎫</div>
               <div>
-                <div style={{ fontWeight: 600 }}>Hall Ticket</div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Download your exam admit card</div>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
               </div>
-              <div style={{ marginLeft: 'auto', color: 'var(--accent-primary)' }}>→</div>
+              <div>
+                <div style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>Admit Card / Hall Ticket</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Download your exam admit card</div>
+              </div>
+              <div style={{ marginLeft: 'auto', color: 'var(--color-primary)' }}>→</div>
             </div>
           </div>
         </a>
         <a href="/fees" style={{ textDecoration: 'none' }}>
-          <div className="card" style={{ cursor: 'pointer', transition: 'all 0.2s', border: '1px solid rgba(16,185,129,0.2)' }} onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--accent-success)')} onMouseLeave={e => (e.currentTarget.style.borderColor = 'rgba(16,185,129,0.2)')}>
+          <div className="card" style={{ cursor: 'pointer', transition: 'all 0.15s', border: '1px solid var(--color-border)' }}>
             <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-              <div style={{ fontSize: '2rem' }}>💳</div>
               <div>
-                <div style={{ fontWeight: 600 }}>Pay Fees</div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>View due amounts and make payment</div>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-success)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="5" width="20" height="14" rx="2" ry="2" />
+                  <line x1="2" y1="10" x2="22" y2="10" />
+                </svg>
               </div>
-              <div style={{ marginLeft: 'auto', color: 'var(--accent-success)' }}>→</div>
+              <div>
+                <div style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>Fees Payment</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>View due amounts and make payments</div>
+              </div>
+              <div style={{ marginLeft: 'auto', color: 'var(--color-success)' }}>→</div>
             </div>
           </div>
         </a>
@@ -556,16 +671,16 @@ function StudentDashboard() {
   );
 }
 
-// ─── Main Dashboard Router ────────────────────────────────────────────────────
+// Main Dashboard Router
 export default function Dashboard() {
   const { isPrincipal, isRegistrar, isFeeManager, isFaculty, isStudent } = usePermissions();
 
   const subtitle =
-    isPrincipal  ? 'Principal — Full Institution View' :
-    isRegistrar  ? 'Registrar — Academic & Enrollment View' :
+    isPrincipal  ? 'Principal — Institutional View' :
+    isRegistrar  ? 'Registrar — Academic & Enrollment' :
     isFeeManager ? 'Fee Manager — Financial Operations' :
-    isFaculty    ? 'Faculty — Teaching & Assessment View' :
-    isStudent    ? 'Student — Personal Academic Portal' :
+    isFaculty    ? 'Faculty — Teaching Desk' :
+    isStudent    ? 'Student — Academic Portal' :
     'Dashboard';
 
   return (
@@ -573,7 +688,7 @@ export default function Dashboard() {
       <Header title="Dashboard" subtitle={`EduOS · ${subtitle}`} />
       <div className="page fade-in">
         <div className="page-header">
-          <h1>{isPrincipal || isRegistrar ? 'Institution Overview' : isStudent ? 'My Academic Portal' : isFeeManager ? 'Financial Overview' : 'Teaching Overview'}</h1>
+          <h1>{isPrincipal || isRegistrar ? 'Institution Overview' : isStudent ? 'Academic Portal' : isFeeManager ? 'Financial Overview' : 'Teaching Overview'}</h1>
           <p>{isPrincipal || isRegistrar ? 'Real-time snapshot of all institutional operations' : isStudent ? 'Your courses, results, fees and upcoming exams' : isFeeManager ? 'Fee collections, accounts and scholarship management' : 'Your courses, classes and examination schedule'}</p>
         </div>
         {(isPrincipal || isRegistrar) && <AdminDashboard />}

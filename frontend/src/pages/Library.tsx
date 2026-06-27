@@ -260,13 +260,13 @@ export default function Library() {
                 onClick={() => setActiveTab('my-loans')} 
                 style={{ background: 'none', border: 'none', borderBottom: activeTab === 'my-loans' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'my-loans' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
               >
-                📖 My Borrowings
+                My Borrowings
               </button>
               <button 
                 onClick={() => setActiveTab('catalog')} 
                 style={{ background: 'none', border: 'none', borderBottom: activeTab === 'catalog' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'catalog' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
               >
-                🔍 Search Books
+                Search Books
               </button>
             </>
           ) : (
@@ -275,19 +275,19 @@ export default function Library() {
                 onClick={() => setActiveTab('catalog')} 
                 style={{ background: 'none', border: 'none', borderBottom: activeTab === 'catalog' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'catalog' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
               >
-                📚 Catalog Inventory
+                Catalog Inventory
               </button>
               <button 
                 onClick={() => setActiveTab('issue')} 
                 style={{ background: 'none', border: 'none', borderBottom: activeTab === 'issue' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'issue' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
               >
-                ✍️ Issue Book Desk
+                Issue Book Desk
               </button>
               <button 
                 onClick={() => setActiveTab('loans')} 
                 style={{ background: 'none', border: 'none', borderBottom: activeTab === 'loans' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'loans' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
               >
-                ⏳ Active Loans & Returns ({activeLoansCount})
+                Active Loans & Returns ({activeLoansCount})
               </button>
             </>
           )}
@@ -341,7 +341,7 @@ export default function Library() {
             {/* Librarian Add Book form */}
             {can('library.manage') && (
               <div className="card" style={{ padding: '1.5rem', border: '1px solid var(--border)', marginTop: '2rem' }}>
-                <h2 style={{ marginBottom: '1rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>📚 Register New Book in Inventory</h2>
+                <h2 style={{ marginBottom: '1rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>Register New Book in Inventory</h2>
                 <form onSubmit={handleAddBook} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
                   <div className="form-group">
                     <label className="form-label">ISBN *</label>
@@ -409,7 +409,7 @@ export default function Library() {
                     />
                   </div>
                   <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
-                    <button type="submit" className="btn btn-primary">➕ Register Book</button>
+                    <button type="submit" className="btn btn-primary">Register Book</button>
                   </div>
                 </form>
               </div>
@@ -420,7 +420,7 @@ export default function Library() {
         {/* Tab 2: Issue Desk */}
         {activeTab === 'issue' && can('library.manage') && (
           <div className="card" style={{ padding: '1.5rem', border: '1px solid var(--border)', maxWidth: '600px', margin: '0 auto' }}>
-            <h2 style={{ marginBottom: '1rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>✍️ Library Check Out Desk</h2>
+            <h2 style={{ marginBottom: '1rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>Library Check Out Desk</h2>
             <form onSubmit={handleIssueBook} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               
               <div className="form-group">
@@ -497,7 +497,7 @@ export default function Library() {
               </div>
 
               <button type="submit" className="btn btn-primary" style={{ padding: '0.75rem', marginTop: '0.5rem', fontWeight: 600 }}>
-                🚀 Check Out Book
+                Check Out Book
               </button>
             </form>
           </div>

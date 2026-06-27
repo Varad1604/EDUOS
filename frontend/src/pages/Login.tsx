@@ -3,15 +3,14 @@ import { authApi } from '../api';
 import { useAuthStore } from '../store';
 import { useNavigate } from 'react-router-dom';
 
-// ─── The institution UUID is fixed for this single-tenant deployment ───────────
 const INSTITUTION_ID = '550e8400-e29b-41d4-a716-446655440000';
 
 const DEMO_ROLES = [
-  { label: 'Principal',   username: 'admin',      icon: '🎓', color: 'rgba(99,102,241,0.15)',  border: 'rgba(99,102,241,0.4)'  },
-  { label: 'Registrar',   username: 'registrar',  icon: '📋', color: 'rgba(139,92,246,0.15)', border: 'rgba(139,92,246,0.4)' },
-  { label: 'Fee Manager', username: 'feemanager', icon: '💰', color: 'rgba(16,185,129,0.15)', border: 'rgba(16,185,129,0.4)' },
-  { label: 'Faculty',     username: 'faculty',    icon: '👨‍🏫', color: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.4)' },
-  { label: 'Student',     username: 'student',    icon: '🎒', color: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.4)'  },
+  { label: 'Principal',   username: 'admin',      hint: 'Full system authorization' },
+  { label: 'Registrar',   username: 'registrar',  hint: 'Academic & enrollment control' },
+  { label: 'Fee Manager', username: 'feemanager', hint: 'Financial records & GL' },
+  { label: 'Faculty',     username: 'faculty',    hint: 'Attendance & marking desk' },
+  { label: 'Student',     username: 'student',    hint: 'Self-service academic portal' },
 ];
 
 export default function Login() {
@@ -43,7 +42,6 @@ export default function Login() {
   const quickLogin = (u: string) => {
     setUsername(u);
     setPassword('password123');
-    // submit immediately
     setError('');
     setLoading(true);
     authApi.login(INSTITUTION_ID, u, 'password123')
@@ -61,85 +59,78 @@ export default function Login() {
 
   return (
     <div className="login-bg">
-      <form className="login-card fade-in" onSubmit={handleSubmit}>
-        {/* Logo */}
-        <div className="login-logo">
-          <div className="login-logo-icon">🎓</div>
-          <h1>EduOS</h1>
-          <p>Educational Management System</p>
+      <div className="login-left">
+        <div className="login-left-logo">
+          <div className="login-left-logo-mark" />
+          <div className="login-left-logo-text">EduOS</div>
         </div>
+        <h2>Enterprise Resource Planning</h2>
+        <p>A unified portal for educational administration, double-entry financial accounting, course scheduling, and student lifecycle metrics.</p>
+      </div>
 
-        <h2>Welcome back</h2>
-        <p className="login-subtitle">Sign in to your institution account</p>
+      <div className="login-right">
+        <div className="login-card">
+          <h1>Sign In</h1>
+          <p className="login-subtitle">Access your institutional workspace</p>
 
-        {error && <div className="login-error">⚠️ {error}</div>}
+          {error && <div className="login-error">{error}</div>}
 
-        {/* Username */}
-        <div className="form-group">
-          <label className="form-label">Username</label>
-          <input
-            id="username"
-            className="form-input"
-            placeholder="Enter your username"
-            value={username}
-            onChange={e => setUsername(e.target.value)}
-            autoComplete="username"
-            autoFocus
-          />
-        </div>
+          <form onSubmit={handleSubmit}>
+            <div className="form-group">
+              <label className="form-label">Username</label>
+              <input
+                id="username"
+                className="form-input"
+                placeholder="Enter username"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                autoComplete="username"
+                autoFocus
+              />
+            </div>
 
-        {/* Password */}
-        <div className="form-group">
-          <label className="form-label">Password</label>
-          <input
-            id="password"
-            className="form-input"
-            type="password"
-            placeholder="Enter your password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            autoComplete="current-password"
-          />
-        </div>
+            <div className="form-group">
+              <label className="form-label">Password</label>
+              <input
+                id="password"
+                className="form-input"
+                type="password"
+                placeholder="Enter password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                autoComplete="current-password"
+              />
+            </div>
 
-        <button id="login-btn" className="login-btn" type="submit" disabled={loading}>
-          {loading ? 'Signing in…' : 'Sign In →'}
-        </button>
+            <button id="login-btn" className="login-btn" type="submit" disabled={loading}>
+              {loading ? 'Processing...' : 'Sign In'}
+            </button>
+          </form>
 
-        {/* Quick-login demo panel */}
-        <div style={{ marginTop: '1.75rem', borderTop: '1px solid var(--border)', paddingTop: '1.25rem' }}>
-          <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.75rem', textAlign: 'center' }}>
-            Quick Demo Login
-          </p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+          <div className="login-divider">
+            <span>Demo Quick Access</span>
+          </div>
+
+          <div className="login-quick-roles">
             {DEMO_ROLES.map(role => (
               <button
                 key={role.username}
                 type="button"
                 id={`quick-login-${role.username}`}
+                className="login-role-btn"
                 disabled={loading}
                 onClick={() => quickLogin(role.username)}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: '0.5rem',
-                  padding: '0.55rem 0.75rem', borderRadius: '8px',
-                  background: role.color, border: `1px solid ${role.border}`,
-                  color: 'var(--text-primary)', fontSize: '0.8rem', fontWeight: 500,
-                  cursor: 'pointer', transition: 'all 0.15s ease',
-                  gridColumn: role.username === 'student' ? '1 / -1' : 'auto',
+                  gridColumn: role.username === 'student' ? '1 / -1' : 'auto'
                 }}
-                onMouseEnter={e => (e.currentTarget.style.opacity = '0.8')}
-                onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
               >
-                <span style={{ fontSize: '1rem' }}>{role.icon}</span>
-                {role.label}
+                <span className="login-role-btn-label">{role.label}</span>
+                <span className="login-role-btn-hint">{role.hint}</span>
               </button>
             ))}
           </div>
-          <p style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: '0.6rem' }}>
-            All demo accounts use password: <code style={{ background: 'var(--surface-2)', padding: '0 4px', borderRadius: 3 }}>password123</code>
-          </p>
         </div>
-      </form>
+      </div>
     </div>
   );
 }

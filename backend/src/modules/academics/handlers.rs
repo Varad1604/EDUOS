@@ -35,6 +35,13 @@ pub async fn get_course(
     Ok(ok(service::get_course(&s.db, &c, id).await?))
 }
 
+pub async fn update_course(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Path(id): Path<Uuid>, Json(b): Json<CreateCourseRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::update_course(&s.db, &c, id, b).await?))
+}
+
 // ── Classes ───────────────────────────────────────────────────────────────────
 pub async fn create_class(
     State(s): State<AppState>, Extension(c): Extension<Claims>,

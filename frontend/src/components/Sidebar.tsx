@@ -2,56 +2,207 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store';
 import { usePermissions } from '../hooks/usePermissions';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Nav item definition: each item declares which permission gates it.
-// The Sidebar renders only items the current role holds the permission for.
-// ─────────────────────────────────────────────────────────────────────────────
 interface NavItem {
-  icon: string;
   label: string;
   path: string;
-  permission?: string;   // if undefined = always visible (e.g. Dashboard)
+  permission?: string;   // if undefined = always visible
 }
 
 const NAV: { section: string; items: NavItem[] }[] = [
   { section: 'Overview', items: [
-    { icon: '📊', label: 'Dashboard',    path: '/' },
+    { label: 'Dashboard',    path: '/' },
   ]},
   { section: 'Academics', items: [
-    { icon: '👥', label: 'Students',     path: '/students',    permission: 'students.viewAll OR students.viewOwn' },
-    { icon: '📚', label: 'Courses',      path: '/courses',     permission: 'courses.viewAll OR courses.viewOwn' },
-    { icon: '📅', label: 'Timetable',    path: '/timetable',   permission: 'timetable.view' },
-    { icon: '✅', label: 'Attendance',   path: '/attendance',  permission: 'attendance.mark OR attendance.viewAll OR attendance.viewOwn' },
-    { icon: '📖', label: 'Library',      path: '/library',     permission: 'library.manage OR library.viewOwn' },
-    { icon: '🏢', label: 'Hostel',       path: '/hostel',      permission: 'hostel.manage OR hostel.viewOwn' },
-    { icon: '🚌', label: 'Transport',    path: '/transport',   permission: 'transport.manage OR transport.viewOwn' },
+    { label: 'Students',     path: '/students',    permission: 'students.viewAll OR students.viewOwn' },
+    { label: 'Courses',      path: '/courses',     permission: 'courses.viewAll OR courses.viewOwn' },
+    { label: 'Timetable',    path: '/timetable',   permission: 'timetable.view' },
+    { label: 'Attendance',   path: '/attendance',  permission: 'attendance.mark OR attendance.viewAll OR attendance.viewOwn' },
+    { label: 'Library',      path: '/library',     permission: 'library.manage OR library.viewOwn' },
+    { label: 'Hostel',       path: '/hostel',      permission: 'hostel.manage OR hostel.viewOwn' },
+    { label: 'Transport',    path: '/transport',   permission: 'transport.manage OR transport.viewOwn' },
   ]},
   { section: 'Examinations', items: [
-    { icon: '📝', label: 'Exams',        path: '/exams',        permission: 'exams.schedule OR exams.viewAll' },
-    { icon: '🎫', label: 'Hall Tickets', path: '/hall-tickets', permission: 'halltickets.generate OR halltickets.viewOwn' },
-    { icon: '🏆', label: 'Results',      path: '/results',      permission: 'results.viewAll OR results.viewOwn' },
+    { label: 'Exams',        path: '/exams',        permission: 'exams.schedule OR exams.viewAll' },
+    { label: 'Hall Tickets', path: '/hall-tickets', permission: 'halltickets.generate OR halltickets.viewOwn' },
+    { label: 'Results',      path: '/results',      permission: 'results.viewAll OR results.viewOwn' },
   ]},
   { section: 'Finance', items: [
-    { icon: '💰', label: 'Fees',         path: '/fees',         permission: 'fees.viewAll OR fees.viewOwn' },
-    { icon: '🎓', label: 'Scholarships', path: '/scholarships', permission: 'scholarships.viewAll OR scholarships.viewOwn' },
-    { icon: '📒', label: 'Accounts',     path: '/accounts',     permission: 'accounts.viewAll' },
-    { icon: '📈', label: 'Reports',      path: '/reports',      permission: 'reports.view' },
-    { icon: '🛡️', label: 'Audit Logs',   path: '/audit-logs',   permission: 'reports.view' },
+    { label: 'Fees',         path: '/fees',         permission: 'fees.viewAll OR fees.viewOwn' },
+    { label: 'Scholarships', path: '/scholarships', permission: 'scholarships.viewAll OR scholarships.viewOwn' },
+    { label: 'Accounts',     path: '/accounts',     permission: 'accounts.viewAll' },
+    { label: 'Reports',      path: '/reports',      permission: 'reports.view' },
+    { label: 'Audit Logs',   path: '/audit-logs',   permission: 'reports.view' },
   ]},
   { section: 'Campus Life', items: [
-    { icon: '🎯', label: 'Placement',    path: '/placement',    permission: 'placement.manage OR placement.apply OR placement.view' },
-    { icon: '🏥', label: 'Medical',      path: '/medical',      permission: 'medical.manage OR medical.view' },
+    { label: 'Placement',    path: '/placement',    permission: 'placement.manage OR placement.apply OR placement.view' },
+    { label: 'Medical',      path: '/medical',      permission: 'medical.manage OR medical.view' },
   ]},
 ];
 
-// Role badge colours
-const ROLE_COLOURS: Record<string, string> = {
-  Principal:  'rgba(99,102,241,0.2)',
-  Registrar:  'rgba(139,92,246,0.2)',
-  FeeManager: 'rgba(16,185,129,0.2)',
-  Faculty:    'rgba(245,158,11,0.2)',
-  Student:    'rgba(59,130,246,0.2)',
-};
+// Helper to render clean SVG icons instead of emojis
+function SidebarIcon({ label }: { label: string }) {
+  const size = 16;
+  const props = {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    className: "icon"
+  };
+
+  switch (label) {
+    case 'Dashboard':
+      return (
+        <svg {...props}>
+          <rect x="3" y="3" width="7" height="9" rx="1" />
+          <rect x="14" y="3" width="7" height="5" rx="1" />
+          <rect x="14" y="12" width="7" height="9" rx="1" />
+          <rect x="3" y="16" width="7" height="5" rx="1" />
+        </svg>
+      );
+    case 'Students':
+      return (
+        <svg {...props}>
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      );
+    case 'Courses':
+      return (
+        <svg {...props}>
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+        </svg>
+      );
+    case 'Timetable':
+      return (
+        <svg {...props}>
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+          <line x1="16" y1="2" x2="16" y2="6" />
+          <line x1="8" y1="2" x2="8" y2="6" />
+          <line x1="3" y1="10" x2="21" y2="10" />
+        </svg>
+      );
+    case 'Attendance':
+      return (
+        <svg {...props}>
+          <polyline points="9 11 12 14 22 4" />
+          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+        </svg>
+      );
+    case 'Library':
+      return (
+        <svg {...props}>
+          <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+          <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+        </svg>
+      );
+    case 'Hostel':
+      return (
+        <svg {...props}>
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          <polyline points="9 22 9 12 15 12 15 22" />
+        </svg>
+      );
+    case 'Transport':
+      return (
+        <svg {...props}>
+          <rect x="1" y="3" width="22" height="13" rx="2" ry="2" />
+          <line x1="1" y1="10" x2="23" y2="10" />
+          <circle cx="6" cy="19" r="2" />
+          <circle cx="18" cy="19" r="2" />
+        </svg>
+      );
+    case 'Exams':
+      return (
+        <svg {...props}>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="16" y1="13" x2="8" y2="13" />
+          <line x1="16" y1="17" x2="8" y2="17" />
+        </svg>
+      );
+    case 'Hall Tickets':
+      return (
+        <svg {...props}>
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          <line x1="3" y1="10" x2="21" y2="10" />
+          <line x1="8" y1="14" x2="8" y2="16" />
+          <line x1="12" y1="14" x2="16" y2="14" />
+        </svg>
+      );
+    case 'Results':
+      return (
+        <svg {...props}>
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+        </svg>
+      );
+    case 'Fees':
+      return (
+        <svg {...props}>
+          <rect x="2" y="5" width="20" height="14" rx="2" ry="2" />
+          <line x1="2" y1="10" x2="22" y2="10" />
+          <path d="M12 6v8" />
+        </svg>
+      );
+    case 'Scholarships':
+      return (
+        <svg {...props}>
+          <path d="M22 10v6M2 10l10-5 10 5-10 5z" />
+          <path d="M6 12v5c0 2 2 3 6 3s6-1 6-3v-5" />
+        </svg>
+      );
+    case 'Accounts':
+      return (
+        <svg {...props}>
+          <rect x="2" y="3" width="20" height="18" rx="2" ry="2" />
+          <line x1="12" y1="3" x2="12" y2="21" />
+        </svg>
+      );
+    case 'Reports':
+      return (
+        <svg {...props}>
+          <line x1="18" y1="20" x2="18" y2="10" />
+          <line x1="12" y1="20" x2="12" y2="4" />
+          <line x1="6" y1="20" x2="6" y2="14" />
+        </svg>
+      );
+    case 'Audit Logs':
+      return (
+        <svg {...props}>
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        </svg>
+      );
+    case 'Placement':
+      return (
+        <svg {...props}>
+          <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+          <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+        </svg>
+      );
+    case 'Medical':
+      return (
+        <svg {...props}>
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <line x1="12" y1="8" x2="12" y2="16" />
+          <line x1="8" y1="12" x2="16" y2="12" />
+        </svg>
+      );
+    default:
+      return (
+        <svg {...props}>
+          <circle cx="12" cy="12" r="10" />
+        </svg>
+      );
+  }
+}
 
 export default function Sidebar() {
   const { user, clearAuth } = useAuthStore();
@@ -59,11 +210,9 @@ export default function Sidebar() {
   const nav = useNavigate();
   const loc = useLocation();
 
-  // Check if a nav item should be shown
   const isVisible = (item: NavItem): boolean => {
     if (item.path === '/audit-logs') return isAdmin;
-    if (!item.permission) return true;                // no gate = always show
-    // Support "OR" logic: "perm.a OR perm.b"
+    if (!item.permission) return true;
     return item.permission.split(' OR ').some(p => granted.includes(p as never));
   };
 
@@ -75,54 +224,70 @@ export default function Sidebar() {
     items: section.items.filter(isVisible),
   })).filter(s => s.items.length > 0);
 
-  const roleBg = ROLE_COLOURS[role] ?? 'rgba(255,255,255,0.05)';
-
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
-        <div className="logo-icon">🎓</div>
+        <div className="logo-icon">
+          <div className="logo-icon-mark" />
+        </div>
         <div>
           <div className="logo-text">EduOS</div>
-          <div className="logo-sub">Management System</div>
+          <span className="logo-sub">Management System</span>
         </div>
       </div>
 
-      {/* Role badge */}
-      <div style={{ margin: '0 1rem 1rem', padding: '0.5rem 0.75rem', background: roleBg, borderRadius: 8, fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-        <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor', flexShrink: 0 }} />
-        {role} Access
+      <div className="sidebar-role-badge">
+        {role}
       </div>
 
-      {filteredNav.map(section => (
-        <div key={section.section} className="sidebar-section">
-          <div className="sidebar-section-label">{section.section}</div>
-          {section.items.map(item => (
-            <div
-              key={item.path}
-              id={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
-              className={`sidebar-item ${isActive(item.path) ? 'active' : ''}`}
-              onClick={() => nav(item.path)}
-            >
-              <span className="icon">{item.icon}</span>
-              {item.label}
-            </div>
-          ))}
-        </div>
-      ))}
+      <nav className="sidebar-nav">
+        {filteredNav.map(section => (
+          <div key={section.section} className="sidebar-section">
+            <div className="sidebar-section-label">{section.section}</div>
+            {section.items.map(item => (
+              <div
+                key={item.path}
+                id={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
+                className={`sidebar-item ${isActive(item.path) ? 'active' : ''}`}
+                onClick={() => nav(item.path)}
+              >
+                <SidebarIcon label={item.label} />
+                {item.label}
+              </div>
+            ))}
+          </div>
+        ))}
+      </nav>
 
       <div className="sidebar-bottom">
         <div className="user-chip">
           <div className="user-avatar">{user?.username?.[0]?.toUpperCase() ?? 'U'}</div>
           <div className="user-info">
             <div className="user-name">{user?.username ?? 'User'}</div>
-            <div className="user-role" style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{user?.role_name ?? 'Role'}</div>
+            <div className="user-role">{user?.role_name ?? 'Role'}</div>
           </div>
           <button
             id="logout-btn"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem', padding: '0.25rem' }}
+            style={{ 
+              background: 'none', 
+              border: 'none', 
+              cursor: 'pointer', 
+              color: 'var(--color-text-muted)', 
+              fontSize: '14px', 
+              padding: '4px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
             onClick={() => { clearAuth(); nav('/login'); }}
             title="Logout"
-          >⎋</button>
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+          </button>
         </div>
       </div>
     </aside>
