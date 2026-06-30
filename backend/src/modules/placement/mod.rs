@@ -39,4 +39,11 @@ pub fn router() -> Router<AppState> {
             get(handlers::list_offers).post(handlers::create_offer))
         .route("/placement/offers/:offer_id/status",
             patch(handlers::update_offer_status))
+        // Interviews (Calendar/Scheduling)
+        .route("/placement/interviews", get(handlers::list_interviews).post(handlers::schedule_interview))
+        .route("/placement/interviews/:interview_id/status", post(handlers::update_interview_status))
+        // Alumni Career tracking
+        .route("/placement/alumni-tracking", get(handlers::list_alumni_placements).post(handlers::register_alumni_placement))
+        // Analytics
+        .route("/placement/analytics/stats", get(handlers::get_placement_analytics_stats))
 }

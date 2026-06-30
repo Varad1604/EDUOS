@@ -8,16 +8,9 @@ use crate::{
     error::AppError,
     middleware::auth::Claims,
     modules::library::{models::*, service},
+    response::ok,
     state::AppState,
 };
-
-fn ok<T: serde::Serialize>(data: T) -> Json<serde_json::Value> {
-    Json(json!({
-        "success": true,
-        "data": data,
-        "meta": { "timestamp": chrono::Utc::now() }
-    }))
-}
 
 pub async fn create_book(
     State(state): State<AppState>,
@@ -69,4 +62,30 @@ pub async fn list_student_loans(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let loans = service::list_student_loans(&state.db, &claims, student_id).await?;
     Ok(ok(loans))
+}
+
+pub async fn create_periodical(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(body): Json<CreatePeriodicalRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let periodical = service::create_periodical(&state.db, &claims, body).await?;
+    Ok(ok(periodical))
+}
+
+pub async fn reserve_book(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(body): Json<CreateReservationRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let reservation = service::reserve_book(&state.db, &claims, body).await?;
+    Ok(ok(reservation))
+}
+
+pub async fn send_overdue_reminders(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let count = service::send_overdue_reminders(&state.db, &state.bus, &claims).await?;
+    Ok(ok(json!({ "reminders_sent": count })))
 }

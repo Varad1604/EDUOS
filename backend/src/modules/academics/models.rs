@@ -91,6 +91,38 @@ pub struct CurriculumVersion {
     pub created_at:     DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct CurriculumCourse {
+    pub curriculum_course_id: Uuid,
+    pub curriculum_id:        Uuid,
+    pub course_id:            Uuid,
+    pub semester:             i32,
+    pub is_mandatory:         bool,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct CoursePrerequisite {
+    pub id:                     Uuid,
+    pub course_id:              Uuid,
+    pub prerequisite_course_id: Uuid,
+    pub created_at:             DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct LeaveRequest {
+    pub leave_id:   Uuid,
+    pub student_id: Option<Uuid>,
+    pub faculty_id: Option<Uuid>,
+    pub start_date: NaiveDate,
+    pub end_date:   NaiveDate,
+    pub leave_type: String,
+    pub reason:     String,
+    pub status:     String,
+    pub approved_by: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 // ── Request Types ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Validate)]
@@ -192,6 +224,32 @@ pub struct AttendanceQuery {
     pub to_date:      Option<NaiveDate>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AddCurriculumCourseRequest {
+    pub course_id:    Uuid,
+    pub semester:     i32,
+    pub is_mandatory: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetCoursePrerequisiteRequest {
+    pub prerequisite_course_id: Uuid,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct CreateLeaveRequest {
+    pub start_date: NaiveDate,
+    pub end_date:   NaiveDate,
+    #[validate(length(min = 1, max = 50))]
+    pub leave_type: String,
+    pub reason:     String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateLeaveStatusRequest {
+    pub status: String, // 'Approved' | 'Rejected'
+}
+
 // ── Response Types ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -211,4 +269,52 @@ pub struct FacultyWorkload {
     pub total_hours:     i64,
     pub is_overloaded:   bool,   // > 16 hours/week (AICTE)
     pub courses:         Vec<serde_json::Value>,
+}
+
+// ── Quizzes & Notifications ───────────────────────────────────────────────
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct Quiz {
+    pub quiz_id:        Uuid,
+    pub institution_id: Uuid,
+    pub course_id:      Uuid,
+    pub course_name:    Option<String>,
+    pub course_code:    Option<String>,
+    pub title:          String,
+    pub description:    Option<String>,
+    pub total_marks:    i32,
+    pub quiz_date:      NaiveDate,
+    pub created_at:     DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Validate, Deserialize)]
+pub struct CreateQuizRequest {
+    pub course_id:   Uuid,
+    #[validate(length(min = 3, max = 255))]
+    pub title:        String,
+    pub description:  Option<String>,
+    pub total_marks:  i32,
+    pub quiz_date:    NaiveDate,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct Notification {
+    pub notification_id: Uuid,
+    pub institution_id:   Uuid,
+    pub title:            String,
+    pub message:          String,
+    pub category:         String,
+    pub target_role:      String,
+    pub created_by:       Option<Uuid>,
+    pub created_by_name:  Option<String>,
+    pub created_at:       DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Validate, Deserialize)]
+pub struct CreateNotificationRequest {
+    #[validate(length(min = 3, max = 255))]
+    pub title:       String,
+    pub message:     String,
+    pub category:    String,
+    pub target_role: String,
 }

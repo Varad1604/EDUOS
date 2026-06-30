@@ -9,7 +9,7 @@ use crate::{
     modules::academics::models::*,
 };
 
-use super::super::student::service::log_event;
+use crate::audit::log_event;
 
 pub async fn create_course(
     db: &PgPool,
@@ -140,6 +140,27 @@ pub async fn update_course(
     .map_err(AppError::Database)?;
 
     Ok(course)
+}
+
+pub async fn delete_course(
+    db: &PgPool,
+    claims: &Claims,
+    course_id: Uuid,
+) -> Result<(), AppError> {
+    let result = sqlx::query(
+        "UPDATE courses SET soft_deleted = true WHERE course_id = $1 AND institution_id = $2 AND soft_deleted = false"
+    )
+    .bind(course_id)
+    .bind(claims.institution_id)
+    .execute(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("Course {} not found or already deleted", course_id)));
+    }
+
+    Ok(())
 }
 
 pub async fn create_class(db: &PgPool, claims: &Claims, req: CreateClassRequest) -> Result<Class, AppError> {
@@ -352,6 +373,61 @@ pub async fn get_attendance_summary(
         percentage: (pct * 100.0).round() / 100.0,
         is_eligible: pct >= 75.0,
     })
+}
+
+pub async fn list_attendance_defaulters(db: &PgPool, claims: &Claims) -> Result<Vec<serde_json::Value>, AppError> {
+    #[derive(sqlx::FromRow)]
+    struct DefaulterRow {
+        student_id:        uuid::Uuid,
+        first_name:        String,
+        last_name:         Option<String>,
+        enrollment_number: Option<String>,
+        course_code:       String,
+        course_name:       String,
+        total_classes:     Option<i64>,
+        present_count:     Option<i64>,
+    }
+
+    let rows = sqlx::query_as::<_, DefaulterRow>(
+        r#"
+        SELECT
+            s.student_id, p.first_name, p.last_name, s.enrollment_number,
+            c.course_code, c.course_name,
+            COUNT(a.attendance_id) as total_classes,
+            COUNT(a.attendance_id) FILTER (WHERE a.status = 'Present') as present_count
+        FROM attendance a
+        JOIN student_profiles s ON a.student_id = s.student_id
+        JOIN persons p ON s.person_id = p.person_id
+        JOIN courses c ON a.course_id = c.course_id
+        WHERE a.institution_id = $1 AND a.soft_deleted = false
+        GROUP BY s.student_id, p.first_name, p.last_name, s.enrollment_number, c.course_code, c.course_name
+        HAVING (COUNT(a.attendance_id) FILTER (WHERE a.status = 'Present')::float / NULLIF(COUNT(a.attendance_id), 0)) < 0.75
+        "#,
+    )
+    .bind(claims.institution_id)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        let total   = row.total_classes.unwrap_or(0);
+        let present = row.present_count.unwrap_or(0);
+        let pct = if total > 0 { (present as f64 / total as f64) * 100.0 } else { 0.0 };
+        result.push(serde_json::json!({
+            "student_id":        row.student_id,
+            "first_name":        row.first_name,
+            "last_name":         row.last_name,
+            "enrollment_number": row.enrollment_number,
+            "course_code":       row.course_code,
+            "course_name":       row.course_name,
+            "total_classes":     total,
+            "present_count":     present,
+            "percentage":        (pct * 100.0).round() / 100.0
+        }));
+    }
+
+    Ok(result)
 }
 
 pub async fn create_timetable_slot(
@@ -589,4 +665,363 @@ pub async fn list_allocations(db: &PgPool, claims: &Claims) -> Result<Vec<serde_
         }));
     }
     Ok(allocations)
+}
+
+pub async fn list_curriculums(db: &PgPool, claims: &Claims) -> Result<Vec<CurriculumVersion>, AppError> {
+    let rows = sqlx::query_as::<_, CurriculumVersion>(
+        "SELECT curriculum_id, institution_id, year, pattern, effective_from, created_at
+         FROM curriculum_versions
+         WHERE institution_id = $1"
+    )
+    .bind(claims.institution_id)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)?;
+    Ok(rows)
+}
+
+pub async fn set_course_prerequisite(
+    db: &PgPool,
+    claims: &Claims,
+    course_id: Uuid,
+    prerequisite_course_id: Uuid,
+) -> Result<serde_json::Value, AppError> {
+    sqlx::query(
+        "INSERT INTO course_prerequisites (course_id, prerequisite_course_id) VALUES ($1, $2)"
+    )
+    .bind(course_id)
+    .bind(prerequisite_course_id)
+    .execute(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(serde_json::json!({ "course_id": course_id, "prerequisite_course_id": prerequisite_course_id }))
+}
+
+pub async fn get_course_prerequisites(
+    db: &PgPool,
+    claims: &Claims,
+    course_id: Uuid,
+) -> Result<Vec<CoursePrerequisite>, AppError> {
+    let rows = sqlx::query_as::<_, CoursePrerequisite>(
+        "SELECT id, course_id, prerequisite_course_id, created_at FROM course_prerequisites WHERE course_id = $1"
+    )
+    .bind(course_id)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)?;
+    Ok(rows)
+}
+
+pub async fn add_curriculum_course(
+    db: &PgPool,
+    claims: &Claims,
+    curriculum_id: Uuid,
+    req: AddCurriculumCourseRequest,
+) -> Result<CurriculumCourse, AppError> {
+    let row = sqlx::query_as::<_, CurriculumCourse>(
+        r#"
+        INSERT INTO curriculum_courses (curriculum_id, course_id, semester, is_mandatory)
+        VALUES ($1, $2, $3, $4)
+        RETURNING curriculum_course_id, curriculum_id, course_id, semester, is_mandatory
+        "#
+    )
+    .bind(curriculum_id)
+    .bind(req.course_id)
+    .bind(req.semester)
+    .bind(req.is_mandatory)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(row)
+}
+
+pub async fn get_curriculum_courses(
+    db: &PgPool,
+    claims: &Claims,
+    curriculum_id: Uuid,
+) -> Result<Vec<serde_json::Value>, AppError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT cc.curriculum_course_id, cc.course_id, cc.semester, cc.is_mandatory,
+               c.course_code, c.course_name
+        FROM curriculum_courses cc
+        JOIN courses c ON cc.course_id = c.course_id
+        WHERE cc.curriculum_id = $1
+        ORDER BY cc.semester, c.course_code
+        "#
+    )
+    .bind(curriculum_id)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    use sqlx::Row;
+    let mut results = Vec::new();
+    for r in rows {
+        results.push(serde_json::json!({
+            "curriculum_course_id": r.get::<Uuid, _>("curriculum_course_id"),
+            "course_id": r.get::<Uuid, _>("course_id"),
+            "semester": r.get::<i32, _>("semester"),
+            "is_mandatory": r.get::<bool, _>("is_mandatory"),
+            "course_code": r.get::<String, _>("course_code"),
+            "course_name": r.get::<String, _>("course_name"),
+        }));
+    }
+    Ok(results)
+}
+
+pub async fn create_leave_request(
+    db: &PgPool,
+    claims: &Claims,
+    req: CreateLeaveRequest,
+) -> Result<LeaveRequest, AppError> {
+    let student_id: Option<Uuid> = sqlx::query_scalar(
+        r#"
+        SELECT sp.student_id
+        FROM users u
+        JOIN student_profiles sp ON u.person_id = sp.person_id
+        WHERE u.user_id = $1
+        "#
+    )
+    .bind(claims.sub)
+    .fetch_optional(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    let faculty_id: Option<Uuid> = sqlx::query_scalar(
+        r#"
+        SELECT f.faculty_id
+        FROM users u
+        JOIN faculty f ON u.person_id = f.person_id
+        WHERE u.user_id = $1
+        "#
+    )
+    .bind(claims.sub)
+    .fetch_optional(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    if student_id.is_none() && faculty_id.is_none() {
+        return Err(AppError::BadRequest("Only students and faculty members can apply for leave".into()));
+    }
+
+    let row = sqlx::query_as::<_, LeaveRequest>(
+        r#"
+        INSERT INTO leave_requests (student_id, faculty_id, start_date, end_date, leave_type, reason)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING leave_id, student_id, faculty_id, start_date, end_date, leave_type, reason, status, approved_by, created_at, updated_at
+        "#
+    )
+    .bind(student_id)
+    .bind(faculty_id)
+    .bind(req.start_date)
+    .bind(req.end_date)
+    .bind(req.leave_type)
+    .bind(req.reason)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(row)
+}
+
+pub async fn list_leave_requests(
+    db: &PgPool,
+    claims: &Claims,
+) -> Result<Vec<LeaveRequest>, AppError> {
+    let rows = sqlx::query_as::<_, LeaveRequest>(
+        "SELECT * FROM leave_requests ORDER BY created_at DESC"
+    )
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(rows)
+}
+
+pub async fn update_leave_status(
+    db: &PgPool,
+    claims: &Claims,
+    leave_id: Uuid,
+    status: String,
+) -> Result<LeaveRequest, AppError> {
+    let row = sqlx::query_as::<_, LeaveRequest>(
+        r#"
+        UPDATE leave_requests
+        SET status = $1, approved_by = $2, updated_at = NOW()
+        WHERE leave_id = $3
+        RETURNING leave_id, student_id, faculty_id, start_date, end_date, leave_type, reason, status, approved_by, created_at, updated_at
+        "#
+    )
+    .bind(status)
+    .bind(claims.sub)
+    .bind(leave_id)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(row)
+}
+
+// ── Quizzes & Notifications Service Fns ───────────────────────────────────
+
+pub async fn create_quiz(
+    db: &PgPool,
+    claims: &Claims,
+    req: super::models::CreateQuizRequest,
+) -> Result<super::models::Quiz, AppError> {
+    let quiz = sqlx::query_as::<_, super::models::Quiz>(
+        r#"
+        INSERT INTO quizzes (institution_id, course_id, title, description, total_marks, quiz_date)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING quiz_id, institution_id, course_id, title, description, total_marks, quiz_date, created_at,
+          (SELECT course_name FROM courses WHERE course_id = $2) as course_name,
+          (SELECT course_code FROM courses WHERE course_id = $2) as course_code
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(req.course_id)
+    .bind(req.title)
+    .bind(req.description)
+    .bind(req.total_marks)
+    .bind(req.quiz_date)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(quiz)
+}
+
+pub async fn list_quizzes(
+    db: &PgPool,
+    claims: &Claims,
+) -> Result<Vec<super::models::Quiz>, AppError> {
+    let quizzes = sqlx::query_as::<_, super::models::Quiz>(
+        r#"
+        SELECT q.quiz_id, q.institution_id, q.course_id, q.title, q.description, q.total_marks, q.quiz_date, q.created_at,
+               c.course_name, c.course_code
+        FROM quizzes q
+        JOIN courses c ON q.course_id = c.course_id
+        WHERE q.institution_id = $1
+        ORDER BY q.quiz_date DESC, q.created_at DESC
+        "#
+    )
+    .bind(claims.institution_id)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(quizzes)
+}
+
+pub async fn create_notification(
+    db: &PgPool,
+    claims: &Claims,
+    req: super::models::CreateNotificationRequest,
+) -> Result<super::models::Notification, AppError> {
+    let notif = sqlx::query_as::<_, super::models::Notification>(
+        r#"
+        INSERT INTO notifications (institution_id, title, message, category, target_role, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING notification_id, institution_id, title, message, category, target_role, created_by, created_at,
+          (SELECT username FROM users WHERE user_id = $6) as created_by_name
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(req.title)
+    .bind(req.message)
+    .bind(req.category)
+    .bind(req.target_role)
+    .bind(claims.sub)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(notif)
+}
+
+pub async fn list_notifications(
+    db: &PgPool,
+    claims: &Claims,
+) -> Result<Vec<super::models::Notification>, AppError> {
+    let notifs = sqlx::query_as::<_, super::models::Notification>(
+        r#"
+        SELECT n.notification_id, n.institution_id, n.title, n.message, n.category, n.target_role, n.created_by, n.created_at,
+               u.username as created_by_name
+        FROM notifications n
+        LEFT JOIN users u ON n.created_by = u.user_id
+        WHERE n.institution_id = $1
+        ORDER BY n.created_at DESC
+        "#
+    )
+    .bind(claims.institution_id)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(notifs)
+}
+
+pub async fn list_faculty(
+    db: &PgPool,
+    claims: &Claims,
+) -> Result<Vec<serde_json::Value>, AppError> {
+    use sqlx::Row;
+    let rows = sqlx::query(
+        r#"
+        SELECT 
+            f.faculty_id,
+            f.employee_code,
+            f.designation,
+            f.qualification,
+            f.specialization,
+            f.joining_date,
+            p.first_name,
+            p.last_name,
+            p.email,
+            p.phone,
+            d.department_name
+        FROM faculty f
+        JOIN persons p ON f.person_id = p.person_id
+        LEFT JOIN departments d ON f.department_id = d.department_id
+        WHERE f.institution_id = $1
+        ORDER BY p.first_name ASC
+        "#
+    )
+    .bind(claims.institution_id)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    let mut list = Vec::new();
+    for row in rows {
+        let faculty_id: uuid::Uuid = row.get("faculty_id");
+        let employee_code: Option<String> = row.get("employee_code");
+        let designation: String = row.get("designation");
+        let qualification: Option<String> = row.get("qualification");
+        let specialization: Option<String> = row.get("specialization");
+        let joining_date: Option<chrono::NaiveDate> = row.get("joining_date");
+        let first_name: String = row.get("first_name");
+        let last_name: Option<String> = row.get("last_name");
+        let email: Option<String> = row.get("email");
+        let phone: Option<String> = row.get("phone");
+        let department_name: Option<String> = row.get("department_name");
+
+        list.push(serde_json::json!({
+            "faculty_id": faculty_id,
+            "employee_code": employee_code,
+            "designation": designation,
+            "qualification": qualification,
+            "specialization": specialization,
+            "joining_date": joining_date,
+            "first_name": first_name,
+            "last_name": last_name,
+            "email": email,
+            "phone": phone,
+            "department_name": department_name,
+        }));
+    }
+    Ok(list)
 }

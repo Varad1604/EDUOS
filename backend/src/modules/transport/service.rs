@@ -286,6 +286,22 @@ pub async fn allocate_transport(
     .await
     .map_err(AppError::Database)?;
 
+    let fare: f64 = stop.fare_amount.parse().unwrap_or(0.0);
+
+    // Auto-post to fee allocations in Finance module
+    sqlx::query(
+        r#"
+        INSERT INTO fee_allocations (fee_allocation_id, institution_id, student_id, fee_structure_id, academic_year, semester, total_amount, due_date, status)
+        VALUES (gen_random_uuid(), $1, $2, NULL, EXTRACT(YEAR FROM CURRENT_DATE), 1, $3, CURRENT_DATE + INTERVAL '10 days', 'Generated')
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(req.student_id)
+    .bind(fare)
+    .execute(&mut *tx)
+    .await
+    .map_err(AppError::Database)?;
+
     tx.commit().await.map_err(AppError::Database)?;
 
     // 5. Calculate fare charge and publish saga event
@@ -456,4 +472,113 @@ pub async fn list_student_allocations(
     .map_err(AppError::Database)?;
 
     Ok(allocations)
+}
+
+pub async fn create_driver(
+    db: &PgPool,
+    claims: &Claims,
+    req: CreateDriverRequest,
+) -> Result<TransportDriver, AppError> {
+    sqlx::query_as::<_, TransportDriver>(
+        r#"
+        INSERT INTO transport_drivers (driver_id, institution_id, name, license_number, contact_number, assigned_vehicle_id)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
+        RETURNING *
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(&req.name)
+    .bind(&req.license_number)
+    .bind(&req.contact_number)
+    .bind(req.assigned_vehicle_id)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn list_drivers(
+    db: &PgPool,
+    claims: &Claims,
+) -> Result<Vec<TransportDriver>, AppError> {
+    sqlx::query_as::<_, TransportDriver>(
+        "SELECT * FROM transport_drivers WHERE institution_id = $1 ORDER BY name ASC"
+    )
+    .bind(claims.institution_id)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn create_trip_log(
+    db: &PgPool,
+    claims: &Claims,
+    req: CreateTripLogRequest,
+) -> Result<TransportTripLog, AppError> {
+    sqlx::query_as::<_, TransportTripLog>(
+        r#"
+        INSERT INTO transport_trip_logs (log_id, institution_id, route_id, vehicle_id, driver_id, departure_time, status)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, NOW(), 'InTransit')
+        RETURNING *
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(req.route_id)
+    .bind(req.vehicle_id)
+    .bind(req.driver_id)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn update_trip_status(
+    db: &PgPool,
+    claims: &Claims,
+    log_id: Uuid,
+    req: UpdateTripStatusRequest,
+) -> Result<TransportTripLog, AppError> {
+    let arrival_clause = if req.status == "Completed" { ", arrival_time = NOW()" } else { "" };
+    let query_str = format!(
+        r#"
+        UPDATE transport_trip_logs
+        SET status = $1, updated_at = NOW() {}
+        WHERE log_id = $2 AND institution_id = $3
+        RETURNING *
+        "#,
+        arrival_clause
+    );
+
+    sqlx::query_as::<_, TransportTripLog>(&query_str)
+        .bind(&req.status)
+        .bind(log_id)
+        .bind(claims.institution_id)
+        .fetch_one(db)
+        .await
+        .map_err(AppError::Database)
+}
+
+pub async fn list_trip_logs(
+    db: &PgPool,
+    claims: &Claims,
+) -> Result<Vec<TransportTripLog>, AppError> {
+    sqlx::query_as::<_, TransportTripLog>(
+        "SELECT * FROM transport_trip_logs WHERE institution_id = $1 ORDER BY created_at DESC"
+    )
+    .bind(claims.institution_id)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn get_live_gps_simulation(
+    _route_id: Uuid,
+) -> Result<serde_json::Value, AppError> {
+    let lat = 12.9716 + (chrono::Utc::now().timestamp() % 100) as f64 * 0.0001;
+    let lng = 77.5946 + (chrono::Utc::now().timestamp() % 100) as f64 * 0.0001;
+    Ok(serde_json::json!({
+        "latitude": lat,
+        "longitude": lng,
+        "speed_kmh": 45,
+        "heading": 180,
+        "last_updated": chrono::Utc::now()
+    }))
 }

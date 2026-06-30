@@ -26,14 +26,18 @@ api.interceptors.response.use(
 export const authApi = {
   login: (institution_id: string, username: string, password: string) =>
     api.post('/auth/login', { institution_id, username, password }),
+  verifyMfa: (mfa_token: string, otp: string) =>
+    api.post('/auth/verify-mfa', { mfa_token, otp }),
   refresh: (refresh_token: string) =>
     api.post('/auth/refresh', { refresh_token }),
   logout: () => api.post('/auth/logout'),
+  listInstitutions: () => api.get('/auth/institutions'),
 };
 
 export const studentsApi = {
   list:   (params?: Record<string, unknown>) => api.get('/students', { params }),
   get:    (id: string) => api.get(`/students/${id}`),
+  getMyProfile: () => api.get('/students/me'),
   create: (data: unknown) => api.post('/students', data),
   update: (id: string, data: unknown) => api.put(`/students/${id}`, data),
   delete: (id: string) => api.delete(`/students/${id}`),
@@ -41,10 +45,18 @@ export const studentsApi = {
 };
 
 export const academicsApi = {
+  curriculums: {
+    list: () => api.get('/curriculums'),
+    courses: (id: string) => api.get(`/curriculums/${id}/courses`),
+    addCourse: (id: string, data: unknown) => api.post(`/curriculums/${id}/courses`, data),
+  },
   courses: {
     list:   (params?: Record<string, unknown>) => api.get('/courses', { params }),
     create: (data: unknown) => api.post('/courses', data),
     update: (id: string, data: unknown) => api.put(`/courses/${id}`, data),
+    delete: (id: string) => api.delete(`/courses/${id}`),
+    prerequisites: (id: string) => api.get(`/courses/${id}/prerequisites`),
+    setPrerequisite: (id: string, data: unknown) => api.post(`/courses/${id}/prerequisites`, data),
   },
   classes: {
     list:   () => api.get('/classes'),
@@ -55,6 +67,7 @@ export const academicsApi = {
     markBulk: (data: unknown) => api.post('/attendance/mark/bulk', data),
     summary: (studentId: string, courseId: string) =>
       api.get(`/attendance/${studentId}/summary`, { params: { course_id: courseId } }),
+    defaulters: () => api.get('/attendance/defaulters'),
   },
   timetable: {
     get:    (classId: string) => api.get(`/timetables/class/${classId}`),
@@ -63,6 +76,22 @@ export const academicsApi = {
   courseAllocations: {
     list:   () => api.get('/course-allocations'),
   },
+  leaveRequests: {
+    list: () => api.get('/leave-requests'),
+    create: (data: unknown) => api.post('/leave-requests', data),
+    updateStatus: (id: string, data: unknown) => api.put(`/leave-requests/${id}/status`, data),
+  },
+  quizzes: {
+    list:   () => api.get('/quizzes'),
+    create: (data: unknown) => api.post('/quizzes', data),
+  },
+  notifications: {
+    list:   () => api.get('/notifications'),
+    create: (data: unknown) => api.post('/notifications', data),
+  },
+  faculty: {
+    list:   () => api.get('/faculty'),
+  },
 };
 
 export const examinationApi = {
@@ -70,6 +99,7 @@ export const examinationApi = {
   marks:   {
     enter: (d: unknown) => api.post('/marks', d),
     enterBulk: (d: unknown) => api.post('/marks/bulk', d),
+    publish: (d: unknown) => api.post('/marks/publish', d),
     getStudentMarks: (sid: string) => api.get(`/marks/student/${sid}`),
   },
   results: { process: (d: unknown) => api.post('/results/process', d), get: (sid: string) => api.get(`/results/${sid}`) },
@@ -83,7 +113,11 @@ export const examinationApi = {
 export const financeApi = {
   feeStructures: { list: () => api.get('/fee-structures'), create: (d: unknown) => api.post('/fee-structures', d) },
   allocations:   { create: (d: unknown) => api.post('/fee-allocations', d), summary: (sid: string) => api.get(`/fee-allocations/${sid}`) },
-  payments:      { initiate: (d: unknown) => api.post('/payments', d), list: (sid: string) => api.get(`/payments/${sid}`) },
+  payments:      { 
+    initiate: (d: unknown) => api.post('/payments', d), 
+    verifyRazorpay: (d: unknown) => api.post('/payments/razorpay/verify', d),
+    list: (sid: string) => api.get(`/payments/${sid}`) 
+  },
   scholarships:  {
     list: () => api.get('/scholarships'),
     create: (d: unknown) => api.post('/scholarships', d),
@@ -95,6 +129,7 @@ export const financeApi = {
     balanceSheet: () => api.get('/reports/balance-sheet'),
     incomeStatement: () => api.get('/reports/income-statement'),
     auditLogs: () => api.get('/reports/audit-logs'),
+    feeCollectionTrend: () => api.get('/reports/fee-collection-trend'),
   },
 };
 
@@ -102,6 +137,7 @@ export const libraryApi = {
   books: {
     list:   () => api.get('/library/books'),
     create: (data: unknown) => api.post('/library/books', data),
+    reserve: (data: unknown) => api.post('/library/reservations', data),
   },
   loans: {
     list:   () => api.get('/library/loans'),
@@ -109,6 +145,12 @@ export const libraryApi = {
     return: (transactionId: string) => api.post(`/library/loans/${transactionId}/return`),
     listStudent: (studentId: string) => api.get(`/library/loans/student/${studentId}`),
   },
+  periodicals: {
+    create: (data: unknown) => api.post('/library/periodicals', data),
+  },
+  reminders: {
+    send: () => api.post('/library/reminders/send'),
+  }
 };
 
 export const hostelApi = {
@@ -122,6 +164,22 @@ export const hostelApi = {
     vacate: (allocationId: string) => api.post(`/hostel/allocations/${allocationId}/vacate`),
     listStudent: (studentId: string) => api.get(`/hostel/allocations/student/${studentId}`),
   },
+  maintenance: {
+    create: (data: unknown) => api.post('/hostel/maintenance', data),
+    update: (id: string, data: unknown) => api.post(`/hostel/maintenance/${id}`, data),
+    list:   () => api.get('/hostel/maintenance'),
+  },
+  leaves: {
+    create: (data: unknown) => api.post('/hostel/leaves', data),
+    approve: (id: string) => api.post(`/hostel/leaves/${id}/approve`),
+    reject: (id: string) => api.post(`/hostel/leaves/${id}/reject`),
+    list:   () => api.get('/hostel/leaves'),
+  },
+  mess: {
+    createMenu: (data: unknown) => api.post('/hostel/mess-menu', data),
+    getMenus:   () => api.get('/hostel/mess-menu'),
+    setPreference: (data: unknown) => api.post('/hostel/mess-preference', data),
+  }
 };
 
 export const transportApi = {
@@ -129,6 +187,7 @@ export const transportApi = {
     list:   () => api.get('/transport/routes'),
     create: (data: unknown) => api.post('/transport/routes', data),
     listStops: (routeId: string) => api.get(`/transport/routes/${routeId}/stops`),
+    getGps: (routeId: string) => api.get(`/transport/routes/${routeId}/gps`),
   },
   stops: {
     create: (data: unknown) => api.post('/transport/stops', data),
@@ -143,6 +202,15 @@ export const transportApi = {
     vacate: (allocationId: string) => api.post(`/transport/allocations/${allocationId}/vacate`),
     listStudent: (studentId: string) => api.get(`/transport/allocations/student/${studentId}`),
   },
+  drivers: {
+    create: (data: unknown) => api.post('/transport/drivers', data),
+    list:   () => api.get('/transport/drivers'),
+  },
+  trips: {
+    create: (data: unknown) => api.post('/transport/trips', data),
+    update: (id: string, data: unknown) => api.post(`/transport/trips/${id}`, data),
+    list:   () => api.get('/transport/trips'),
+  }
 };
 
 // ── Helper: unwrap { data: T } envelope ──────────────────────────────────────
@@ -168,6 +236,18 @@ export const placementApi = {
   listOffers: () => api.get('/placement/offers').then(unwrap),
   createOffer: (data: unknown) => api.post('/placement/offers', data).then(unwrap),
   updateOfferStatus: (id: string, data: unknown) => api.patch(`/placement/offers/${id}/status`, data).then(unwrap),
+  
+  // Interviews
+  scheduleInterview: (data: unknown) => api.post('/placement/interviews', data).then(unwrap),
+  listInterviews: () => api.get('/placement/interviews').then(unwrap),
+  updateInterviewStatus: (id: string, data: unknown) => api.post(`/placement/interviews/${id}/status`, data).then(unwrap),
+  
+  // Alumni Placement
+  registerAlumniPlacement: (data: unknown) => api.post('/placement/alumni-tracking', data).then(unwrap),
+  listAlumniPlacements: () => api.get('/placement/alumni-tracking').then(unwrap),
+  
+  // Analytics
+  getAnalyticsStats: () => api.get('/placement/analytics/stats').then(unwrap),
 };
 
 export const medicalApi = {

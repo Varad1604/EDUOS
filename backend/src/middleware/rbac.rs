@@ -5,42 +5,6 @@ use axum::{
 };
 use crate::{error::AppError, middleware::auth::Claims, state::AppState};
 
-/// Per-request permission check. Call this as a route-level layer.
-#[allow(dead_code)]
-pub async fn check_permission(
-    State(state): State<AppState>,
-    req: Request,
-    next: Next,
-    resource: &str,
-    action: &str,
-) -> Result<Response, AppError> {
-    let claims = req
-        .extensions()
-        .get::<Claims>()
-        .ok_or(AppError::Unauthorized("No auth claims".into()))?
-        .clone();
-
-    let has_permission: Option<bool> = sqlx::query_scalar(
-        r#"
-        SELECT EXISTS(
-            SELECT 1 FROM role_permissions
-            WHERE role_id = $1 AND resource = $2 AND action = $3
-        )
-        "#,
-    )
-    .bind(claims.role_id)
-    .bind(resource)
-    .bind(action)
-    .fetch_one(&state.db)
-    .await
-    .map_err(AppError::Database)?;
-
-    if has_permission.unwrap_or(false) {
-        Ok(next.run(req).await)
-    } else {
-        Err(AppError::Forbidden)
-    }
-}
 
 /// Global RBAC middleware that intercepts requests, maps them to resource & action, and checks DB permissions.
 pub async fn rbac_middleware(
@@ -83,6 +47,7 @@ pub async fn rbac_middleware(
         ("POST", "/api/v1/classes") => ("courses", "create"),
         ("GET", "/api/v1/classes") => ("courses", "read"),
         ("POST", p) if p.starts_with("/api/v1/faculty/") && p.ends_with("/courses") => ("courses", "create"),
+        ("GET", "/api/v1/faculty") => ("courses", "read"),
         ("GET", p) if p.starts_with("/api/v1/faculty/") && p.ends_with("/workload") => ("courses", "read"),
         // Attendance
         ("POST", "/api/v1/attendance/mark") => ("attendance", "create"),
@@ -92,10 +57,17 @@ pub async fn rbac_middleware(
         ("POST", "/api/v1/timetables") => ("courses", "create"),
         ("GET", p) if p.starts_with("/api/v1/timetables/class/") => ("courses", "read"),
         ("GET", "/api/v1/course-allocations") => ("courses", "read"),
+        // Quizzes & Notifications
+        ("POST", "/api/v1/quizzes") => ("courses", "create"),
+        ("GET", "/api/v1/quizzes") => ("courses", "read"),
+        ("POST", "/api/v1/notifications") => ("courses", "create"),
+        ("GET", "/api/v1/notifications") => ("courses", "read"),
         // Exams & Marks
         ("POST", "/api/v1/exams") => ("exams", "create"),
-        ("GET", "/api/v1/exams") => ("exams", "read"),
-        ("POST", "/api/v1/marks") => ("marks", "create"),
+        ("GET",  "/api/v1/exams") => ("exams", "read"),
+        ("POST", "/api/v1/marks")         => ("marks", "create"),
+        ("POST", "/api/v1/marks/bulk")    => ("marks", "create"),
+        ("POST", "/api/v1/marks/publish") => ("marks", "approve"),
         ("POST", "/api/v1/results/process") => ("marks", "approve"),
         ("GET", p) if p.starts_with("/api/v1/results/") => ("marks", "read"),
         ("GET", p) if p.starts_with("/api/v1/marks/student/") => ("marks", "read"),
@@ -182,6 +154,24 @@ pub async fn rbac_middleware(
         return Ok(next.run(req).await);
     }
 
+    let cache_key = format!("rbac:perm:{}:{}:{}", claims.role_id, resource, action);
+    let mut redis_conn_opt = None;
+    if let Ok(mut conn) = state.redis.get().await {
+        let cached_val: Option<String> = redis::cmd("GET")
+            .arg(&cache_key)
+            .query_async(&mut conn)
+            .await
+            .ok();
+        if let Some(val) = cached_val {
+            if val == "1" {
+                return Ok(next.run(req).await);
+            } else {
+                return Err(AppError::Forbidden);
+            }
+        }
+        redis_conn_opt = Some(conn);
+    }
+
     let has_permission: Option<bool> = sqlx::query_scalar(
         r#"
         SELECT EXISTS(
@@ -197,7 +187,19 @@ pub async fn rbac_middleware(
     .await
     .map_err(AppError::Database)?;
 
-    if has_permission.unwrap_or(false) {
+    let allowed = has_permission.unwrap_or(false);
+
+    if let Some(mut conn) = redis_conn_opt {
+        let val_str = if allowed { "1" } else { "0" };
+        let _: Result<(), _> = redis::cmd("SETEX")
+            .arg(&cache_key)
+            .arg(60)
+            .arg(val_str)
+            .query_async(&mut conn)
+            .await;
+    }
+
+    if allowed {
         Ok(next.run(req).await)
     } else {
         Err(AppError::Forbidden)
@@ -213,13 +215,13 @@ pub async fn seed_default_permissions(
     let role_permissions = vec![
         ("Principal", vec![
             ("students", "read"), ("students", "create"), ("students", "update"), ("students", "delete"),
-            ("courses", "read"), ("courses", "create"), ("courses", "update"),
-            ("marks", "read"), ("marks", "approve"),
-            ("exams", "read"), ("exams", "create"), ("exams", "approve"),
-            ("fees", "read"), ("fees", "create"), ("fees", "update"), ("fees", "approve"),
-            ("accounts", "read"), ("accounts", "approve"),
-            ("reports", "read"),
-            ("attendance", "read"), ("attendance", "approve"),
+            ("courses", "read"), ("courses", "create"), ("courses", "update"), ("courses", "delete"),
+            ("marks", "read"), ("marks", "create"), ("marks", "update"), ("marks", "delete"), ("marks", "approve"),
+            ("exams", "read"), ("exams", "create"), ("exams", "update"), ("exams", "delete"), ("exams", "approve"),
+            ("fees", "read"), ("fees", "create"), ("fees", "update"), ("fees", "delete"), ("fees", "approve"),
+            ("accounts", "read"), ("accounts", "create"), ("accounts", "update"), ("accounts", "delete"), ("accounts", "approve"),
+            ("reports", "read"), ("reports", "create"), ("reports", "update"), ("reports", "delete"),
+            ("attendance", "read"), ("attendance", "create"), ("attendance", "update"), ("attendance", "delete"), ("attendance", "approve"),
             ("library", "manage"), ("library", "view"),
             ("hostel", "manage"), ("hostel", "view"),
             ("transport", "manage"), ("transport", "view"),
@@ -233,13 +235,13 @@ pub async fn seed_default_permissions(
             ("exams", "read"), ("exams", "create"), ("exams", "update"), ("exams", "delete"),
             ("fees", "read"),
             ("accounts", "read"),
-            ("reports", "read"), ("reports", "create"), ("reports", "update"), ("reports", "delete"),
+            ("reports", "read"),
             ("attendance", "read"), ("attendance", "approve"),
             ("library", "manage"), ("library", "view"),
-            ("hostel", "manage"), ("hostel", "view"),
-            ("transport", "manage"), ("transport", "view"),
-            ("placement", "manage"), ("placement", "view"), ("placement", "apply"),
-            ("medical", "manage"), ("medical", "view"),
+            ("hostel", "view"),
+            ("transport", "view"),
+            ("placement", "view"),
+            ("medical", "view"),
         ]),
         ("FeeManager", vec![
             ("students", "read"),
@@ -254,10 +256,7 @@ pub async fn seed_default_permissions(
             ("exams", "read"), ("exams", "create"),
             ("marks", "read"), ("marks", "create"),
             ("reports", "read"),
-            ("library", "manage"), ("library", "view"),
-            ("hostel", "manage"), ("hostel", "view"),
-            ("transport", "manage"), ("transport", "view"),
-            ("placement", "view"),
+            ("library", "view"),
             ("medical", "view"),
         ]),
         ("Student", vec![

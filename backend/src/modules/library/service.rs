@@ -203,6 +203,19 @@ pub async fn return_book(
     sql_tx.commit().await.map_err(AppError::Database)?;
 
     if fine_amount > 0.0 {
+        // Also post to Finance module (fee_allocations) for auto-billing
+        let _ = sqlx::query(
+            r#"
+            INSERT INTO fee_allocations (fee_allocation_id, institution_id, student_id, fee_structure_id, academic_year, semester, total_amount, due_date, status)
+            VALUES (gen_random_uuid(), $1, $2, NULL, EXTRACT(YEAR FROM CURRENT_DATE), 1, $3, CURRENT_DATE + INTERVAL '7 days', 'Generated')
+            "#
+        )
+        .bind(updated_tx.institution_id)
+        .bind(updated_tx.student_id)
+        .bind(fine_amount)
+        .execute(db)
+        .await;
+
         bus.publish(DomainEvent::LibraryFineGenerated(LibraryFineGeneratedPayload {
             transaction_id: updated_tx.transaction_id,
             student_id: updated_tx.student_id,
@@ -303,4 +316,87 @@ pub async fn list_student_loans(
     .map_err(AppError::Database)?;
 
     Ok(loans)
+}
+
+pub async fn create_periodical(
+    db: &PgPool,
+    claims: &Claims,
+    req: CreatePeriodicalRequest,
+) -> Result<Periodical, AppError> {
+    sqlx::query_as::<_, Periodical>(
+        r#"
+        INSERT INTO periodicals (periodical_id, institution_id, title, publisher, frequency, category, total_copies, available_copies)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $6)
+        RETURNING *
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(&req.title)
+    .bind(&req.publisher)
+    .bind(&req.frequency)
+    .bind(&req.category)
+    .bind(req.total_copies)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn reserve_book(
+    db: &PgPool,
+    claims: &Claims,
+    req: CreateReservationRequest,
+) -> Result<BookReservation, AppError> {
+    let book = sqlx::query_as::<_, Book>(
+        "SELECT * FROM library_books WHERE book_id = $1 AND institution_id = $2"
+    )
+    .bind(req.book_id)
+    .bind(claims.institution_id)
+    .fetch_optional(db)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound("Book not found".into()))?;
+
+    if book.available_copies > 0 {
+        return Err(AppError::BadRequest("Book is currently available, no need to reserve. You can issue it directly.".into()));
+    }
+
+    sqlx::query_as::<_, BookReservation>(
+        r#"
+        INSERT INTO book_reservations (reservation_id, institution_id, student_id, book_id, status)
+        VALUES (gen_random_uuid(), $1, $2, $3, 'Pending')
+        RETURNING *
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(claims.sub) // Assuming student is the caller
+    .bind(req.book_id)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn send_overdue_reminders(
+    db: &PgPool,
+    bus: &EventBus,
+    claims: &Claims,
+) -> Result<usize, AppError> {
+    let overdue_loans = sqlx::query_as::<_, BookTransaction>(
+        "SELECT * FROM library_transactions WHERE institution_id = $1 AND status = 'Issued' AND due_date < CURRENT_DATE"
+    )
+    .bind(claims.institution_id)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    for loan in &overdue_loans {
+        bus.publish(DomainEvent::LibraryFineGenerated(LibraryFineGeneratedPayload {
+            transaction_id: loan.transaction_id,
+            student_id: loan.student_id,
+            institution_id: loan.institution_id,
+            amount: 0.0, // Just a trigger
+            occurred_at: Utc::now(),
+        }));
+    }
+
+    Ok(overdue_loans.len())
 }

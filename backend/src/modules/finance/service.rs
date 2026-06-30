@@ -8,7 +8,7 @@ use crate::{
     middleware::auth::Claims,
     modules::finance::models::*,
 };
-use super::super::student::service::log_event;
+use crate::audit::log_event;
 
 pub async fn create_fee_structure(
     db: &PgPool,
@@ -189,6 +189,91 @@ pub async fn initiate_payment(
             occurred_at: Utc::now(),
         }));
     }
+
+    Ok(payment)
+}
+
+#[derive(serde::Deserialize)]
+pub struct VerifyRazorpayRequest {
+    pub fee_allocation_id: Uuid,
+    pub razorpay_order_id: String,
+    pub razorpay_payment_id: String,
+    pub razorpay_signature: String,
+}
+
+pub async fn verify_razorpay_payment(
+    db: &PgPool,
+    bus: &EventBus,
+    claims: &Claims,
+    req: VerifyRazorpayRequest,
+) -> Result<FeePayment, AppError> {
+    // 1. Verify allocation
+    let (student_id, paid_f64, total_f64, status_str): (Uuid, f64, f64, String) = sqlx::query_as(
+        "SELECT student_id, CAST(paid_amount AS FLOAT8), CAST(total_amount AS FLOAT8), status FROM fee_allocations WHERE fee_allocation_id = $1 AND institution_id = $2 AND soft_deleted = false"
+    )
+    .bind(req.fee_allocation_id)
+    .bind(claims.institution_id)
+    .fetch_optional(db)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound("Fee allocation not found".into()))?;
+
+    if status_str == "Paid" {
+        return Err(AppError::Conflict("Fee already fully paid".into()));
+    }
+
+    let amount_to_pay = total_f64 - paid_f64;
+
+    // 2. Mock Signature Verification
+    if req.razorpay_signature.is_empty() || req.razorpay_payment_id.is_empty() {
+        return Err(AppError::BadRequest("Invalid signature or payment ID".into()));
+    }
+
+    let receipt_num = format!("RCP-RZ-{}", req.razorpay_payment_id.chars().take(8).collect::<String>().to_uppercase());
+
+    let payment = sqlx::query_as::<_, FeePayment>(
+        r#"
+        INSERT INTO fee_payments
+            (payment_id, institution_id, fee_allocation_id, student_id,
+             amount, payment_mode, payment_gateway, transaction_id,
+             payment_date, status, receipt_number, receipt_generated)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, 'Online', 'Razorpay', $5, NOW(), 'Success', $6, true)
+        RETURNING payment_id, institution_id, fee_allocation_id, student_id,
+                  CAST(amount AS TEXT) AS amount,
+                  payment_mode, payment_gateway, transaction_id,
+                  payment_date, status, receipt_number, receipt_generated,
+                  created_at, soft_deleted
+        "#,
+    )
+    .bind(claims.institution_id)
+    .bind(req.fee_allocation_id)
+    .bind(student_id)
+    .bind(amount_to_pay)
+    .bind(&req.razorpay_payment_id)
+    .bind(&receipt_num)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    // 3. Mark fee as paid
+    let new_paid = paid_f64 + amount_to_pay;
+    let new_status = if new_paid >= total_f64 { "Paid" } else { "Partial" };
+    sqlx::query(
+        "UPDATE fee_allocations SET paid_amount = $1, status = $2, updated_at = NOW() WHERE fee_allocation_id = $3"
+    )
+    .bind(new_paid).bind(new_status).bind(req.fee_allocation_id)
+    .execute(db).await.map_err(AppError::Database)?;
+
+    post_fee_journal_entry(db, claims, payment.payment_id, amount_to_pay, "Online (Razorpay)").await?;
+
+    bus.publish(DomainEvent::PaymentSucceeded(PaymentSucceededPayload {
+        payment_id: payment.payment_id,
+        student_id,
+        institution_id: claims.institution_id,
+        amount: amount_to_pay,
+        transaction_id: receipt_num,
+        occurred_at: Utc::now(),
+    }));
 
     Ok(payment)
 }
@@ -378,6 +463,20 @@ pub async fn create_journal_entry(
         ));
     }
 
+    // Check Fiscal Year Locking
+    let is_locked: Option<bool> = sqlx::query_scalar(
+        "SELECT is_locked FROM fiscal_years WHERE institution_id = $1 AND start_date <= $2 AND end_date >= $2"
+    )
+    .bind(claims.institution_id)
+    .bind(req.entry_date)
+    .fetch_optional(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    if let Some(true) = is_locked {
+        return Err(AppError::Business("The fiscal year for the given entry date is locked. Cannot post journal entries.".into()));
+    }
+
     let entry = sqlx::query_as::<_, JournalEntry>(
         r#"INSERT INTO journal_entries
                (journal_id, institution_id, entry_date, reference, description, status, created_by_user_id)
@@ -462,4 +561,243 @@ pub async fn approve_journal_entry(
     }));
 
     Ok(entry)
+}
+
+pub async fn get_fee_collection_trend(db: &PgPool, claims: &Claims) -> Result<Vec<MonthlyTrend>, AppError> {
+    let rows = sqlx::query_as::<_, MonthlyTrend>(
+        r#"
+        SELECT 
+            EXTRACT(MONTH FROM payment_date)::int as month,
+            SUM(amount)::numeric::text as total
+        FROM fee_payments
+        WHERE institution_id = $1 
+          AND status = 'Success'
+          AND EXTRACT(YEAR FROM payment_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+        GROUP BY month
+        ORDER BY month
+        "#
+    )
+    .bind(claims.institution_id)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)?;
+    Ok(rows)
+}
+
+pub async fn create_fiscal_year(
+    db: &PgPool,
+    claims: &Claims,
+    req: CreateFiscalYearRequest,
+) -> Result<FiscalYear, AppError> {
+    sqlx::query_as::<_, FiscalYear>(
+        r#"
+        INSERT INTO fiscal_years (fiscal_year_id, institution_id, name, start_date, end_date)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4)
+        RETURNING *
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(req.name)
+    .bind(req.start_date)
+    .bind(req.end_date)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn lock_fiscal_year(
+    db: &PgPool,
+    claims: &Claims,
+    fiscal_year_id: Uuid,
+) -> Result<FiscalYear, AppError> {
+    sqlx::query_as::<_, FiscalYear>(
+        "UPDATE fiscal_years SET is_locked = true, updated_at = NOW() WHERE fiscal_year_id = $1 AND institution_id = $2 RETURNING *"
+    )
+    .bind(fiscal_year_id)
+    .bind(claims.institution_id)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn upload_bank_statement(
+    db: &PgPool,
+    claims: &Claims,
+    req: UploadBankStatementRequest,
+) -> Result<BankStatement, AppError> {
+    let stmt = sqlx::query_as::<_, BankStatement>(
+        r#"
+        INSERT INTO bank_statements (statement_id, institution_id, account_number, statement_date, uploaded_by)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4)
+        RETURNING *
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(req.account_number)
+    .bind(req.statement_date)
+    .bind(claims.sub)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    for line in req.lines {
+        sqlx::query(
+            r#"
+            INSERT INTO bank_statement_lines (line_id, statement_id, transaction_date, description, reference_id, amount)
+            VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
+            "#
+        )
+        .bind(stmt.statement_id)
+        .bind(line.transaction_date)
+        .bind(line.description)
+        .bind(line.reference_id)
+        .bind(line.amount)
+        .execute(db)
+        .await
+        .map_err(AppError::Database)?;
+    }
+
+    Ok(stmt)
+}
+
+pub async fn create_late_fee_policy(
+    db: &PgPool,
+    claims: &Claims,
+    req: CreateLateFeePolicyRequest,
+) -> Result<LateFeePolicy, AppError> {
+    sqlx::query_as::<_, LateFeePolicy>(
+        r#"
+        INSERT INTO late_fee_policies (policy_id, institution_id, fee_structure_id, penalty_amount, penalty_type, grace_period_days)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
+        RETURNING *
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(req.fee_structure_id)
+    .bind(req.penalty_amount)
+    .bind(req.penalty_type)
+    .bind(req.grace_period_days)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn apply_late_fees(
+    db: &PgPool,
+    claims: &Claims,
+) -> Result<u64, AppError> {
+    // A simplified cron handler: applies fixed penalty to overdue allocations without waivers
+    let res = sqlx::query(
+        r#"
+        UPDATE fee_allocations fa
+        SET total_amount = CAST(CAST(fa.total_amount AS numeric) + lfp.penalty_amount AS text)
+        FROM late_fee_policies lfp
+        WHERE fa.institution_id = $1 
+          AND fa.fee_structure_id = lfp.fee_structure_id 
+          AND lfp.penalty_type = 'Fixed'
+          AND fa.status = 'Generated'
+          AND (CURRENT_DATE - fa.due_date) > lfp.grace_period_days
+          AND fa.soft_deleted = false
+        "#
+    )
+    .bind(claims.institution_id)
+    .execute(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(res.rows_affected())
+}
+
+pub async fn create_installment_plan(
+    db: &PgPool,
+    claims: &Claims,
+    req: CreateInstallmentPlanRequest,
+) -> Result<InstallmentPlan, AppError> {
+    let total_amount: f64 = sqlx::query_scalar("SELECT CAST(total_amount AS FLOAT8) FROM fee_allocations WHERE allocation_id = $1 AND institution_id = $2")
+        .bind(req.allocation_id)
+        .bind(claims.institution_id)
+        .fetch_optional(db)
+        .await
+        .map_err(AppError::Database)?
+        .ok_or_else(|| AppError::NotFound("Allocation not found".into()))?;
+
+    let plan = sqlx::query_as::<_, InstallmentPlan>(
+        r#"
+        INSERT INTO installment_plans (plan_id, allocation_id, total_amount, installments_count)
+        VALUES (gen_random_uuid(), $1, $2, $3)
+        RETURNING *
+        "#
+    )
+    .bind(req.allocation_id)
+    .bind(total_amount)
+    .bind(req.installments_count)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    let installment_amt = total_amount / req.installments_count as f64;
+    for i in 0..req.installments_count {
+        let due_date = chrono::Utc::now().naive_utc().date() + chrono::Duration::days(30 * i as i64);
+        sqlx::query(
+            "INSERT INTO installment_schedules (schedule_id, plan_id, amount_due, due_date) VALUES (gen_random_uuid(), $1, $2, $3)"
+        )
+        .bind(plan.plan_id)
+        .bind(installment_amt)
+        .bind(due_date)
+        .execute(db)
+        .await
+        .map_err(AppError::Database)?;
+    }
+
+    Ok(plan)
+}
+
+pub async fn request_fee_waiver(
+    db: &PgPool,
+    claims: &Claims,
+    req: CreateFeeWaiverRequest,
+) -> Result<FeeWaiverRequestRow, AppError> {
+    sqlx::query_as::<_, FeeWaiverRequestRow>(
+        r#"
+        INSERT INTO fee_waiver_requests (waiver_id, institution_id, student_id, allocation_id, requested_amount, reason)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
+        RETURNING *
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(claims.sub) // Assuming student requests it
+    .bind(req.allocation_id)
+    .bind(req.requested_amount)
+    .bind(req.reason)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn approve_fee_waiver(
+    db: &PgPool,
+    claims: &Claims,
+    waiver_id: Uuid,
+) -> Result<FeeWaiverRequestRow, AppError> {
+    let waiver = sqlx::query_as::<_, FeeWaiverRequestRow>(
+        "UPDATE fee_waiver_requests SET status = 'Approved', approved_by = $1, updated_at = NOW() WHERE waiver_id = $2 AND institution_id = $3 RETURNING *"
+    )
+    .bind(claims.sub)
+    .bind(waiver_id)
+    .bind(claims.institution_id)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    // Apply waiver to allocation
+    sqlx::query(
+        "UPDATE fee_allocations SET waiver_amount = CAST($1 AS TEXT) WHERE fee_allocation_id = $2"
+    )
+    .bind(&waiver.requested_amount)
+    .bind(waiver.allocation_id)
+    .execute(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(waiver)
 }

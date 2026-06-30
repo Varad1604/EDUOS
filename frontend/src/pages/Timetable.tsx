@@ -71,9 +71,14 @@ export default function Timetable() {
   const handleCreateClass = async (e: React.FormEvent) => {
     e.preventDefault();
     setClassError('');
+    const instId = user?.institution_id;
+    if (!instId) {
+      setClassError('No active institution context found.');
+      return;
+    }
     try {
       await academicsApi.classes.create({
-        institution_id: '550e8400-e29b-41d4-a716-446655440000',
+        institution_id: instId,
         semester: parseInt(classForm.semester),
         section: classForm.section,
         academic_year: parseInt(classForm.academic_year),
@@ -101,13 +106,13 @@ export default function Timetable() {
           setSelectedClassId(clsList[0].class_id);
         }
       })
-      .catch(() => {});
+      .catch(err => console.warn('Request failed:', err));
 
     academicsApi.courseAllocations.list()
       .then(r => {
         setAllocations(r.data.data ?? []);
       })
-      .catch(() => {});
+      .catch(err => console.warn('Request failed:', err));
   }, []);
 
   const fetchTimetable = (classId: string) => {
@@ -117,7 +122,7 @@ export default function Timetable() {
       .then(r => {
         setSlots(r.data.data ?? []);
       })
-      .catch(() => {})
+      .catch(err => console.warn('Request failed:', err))
       .finally(() => setLoading(false));
   };
 

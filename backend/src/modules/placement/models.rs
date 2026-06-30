@@ -55,8 +55,35 @@ pub struct PlacementApplication {
     pub applied_at:       DateTime<Utc>,
     pub status:           String,
     pub rejection_reason: Option<String>,
+    pub resume_url:       Option<String>,
     pub created_at:       DateTime<Utc>,
     pub updated_at:       DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct PlacementInterview {
+    pub interview_id:     Uuid,
+    pub institution_id:   Uuid,
+    pub application_id:   Uuid,
+    pub round_name:       String,
+    pub scheduled_at:     DateTime<Utc>,
+    pub duration_minutes: Option<i32>,
+    pub location_or_url:  Option<String>,
+    pub status:           String,
+    pub created_at:       DateTime<Utc>,
+    pub updated_at:       DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct AlumniPlacement {
+    pub alumni_id:        Uuid,
+    pub institution_id:   Uuid,
+    pub student_id:       Uuid,
+    pub company_name:     String,
+    pub designation:      String,
+    pub ctc_lpa:          String, // NUMERIC(8,2) cast to TEXT
+    pub joining_date:     NaiveDate,
+    pub created_at:       DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
@@ -129,6 +156,7 @@ pub struct PlacementApplicationResponse {
     pub applied_at:       DateTime<Utc>,
     pub status:           String,
     pub rejection_reason: Option<String>,
+    pub resume_url:       Option<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
@@ -187,6 +215,7 @@ pub struct CreateDriveRequest {
 pub struct ApplyDriveRequest {
     pub drive_id:   Uuid,
     pub student_id: Uuid,
+    pub resume_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -251,5 +280,28 @@ pub struct EligibleStudent {
     pub cgpa:              Option<String>,
     pub backlogs_count:    i64,
     pub applied:           bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ScheduleInterviewRequest {
+    pub application_id:   Uuid,
+    pub round_name:       String,
+    pub scheduled_at:     DateTime<Utc>,
+    pub duration_minutes: Option<i32>,
+    pub location_or_url:  Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TrackAlumniPlacementRequest {
+    pub student_id:       Uuid,
+    pub company_name:     String,
+    pub designation:      String,
+    pub ctc_lpa:          f64,
+    pub joining_date:     NaiveDate,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateInterviewStatusRequest {
+    pub status:           String,
 }
 

@@ -17,4 +17,10 @@ pub fn router() -> Router<AppState> {
         .route("/transport/allocations/:allocation_id/vacate", post(handlers::vacate_transport))
         .route("/transport/allocations", get(handlers::list_allocations))
         .route("/transport/allocations/student/:student_id", get(handlers::list_student_allocations))
+        .route("/transport/drivers", post(handlers::create_driver))
+        .route("/transport/drivers", get(handlers::list_drivers))
+        .route("/transport/trips", post(handlers::create_trip_log))
+        .route("/transport/trips/:log_id", post(handlers::update_trip_status))
+        .route("/transport/trips", get(handlers::list_trip_logs))
+        .route("/transport/routes/:route_id/gps", get(handlers::get_live_gps_simulation))
 }

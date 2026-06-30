@@ -34,6 +34,51 @@ pub struct HostelAllocation {
     pub updated_at:       DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct MaintenanceTicket {
+    pub ticket_id:        Uuid,
+    pub institution_id:   Uuid,
+    pub room_id:          Uuid,
+    pub reported_by:      Uuid,
+    pub issue_type:       String,
+    pub description:      String,
+    pub status:           String,
+    pub created_at:       DateTime<Utc>,
+    pub updated_at:       DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct HostelLeave {
+    pub leave_id:         Uuid,
+    pub institution_id:   Uuid,
+    pub student_id:       Uuid,
+    pub departure_date:   NaiveDate,
+    pub return_date:      NaiveDate,
+    pub reason:           String,
+    pub status:           String,
+    pub created_at:       DateTime<Utc>,
+    pub updated_at:       DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct MessMenu {
+    pub menu_id:          Uuid,
+    pub institution_id:   Uuid,
+    pub day_of_week:      String,
+    pub meal_type:        String,
+    pub items:            String,
+    pub created_at:       DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct MessPreference {
+    pub preference_id:      Uuid,
+    pub institution_id:     Uuid,
+    pub student_id:         Uuid,
+    pub dietary_preference: String,
+    pub created_at:         DateTime<Utc>,
+}
+
 // ── Request/Response types ───────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Validate)]
@@ -69,4 +114,35 @@ pub struct RoomAllocationResponse {
     pub mess_plan:        String,
     pub status:           String,
     pub rent_amount:      String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateMaintenanceTicketRequest {
+    pub room_id:          Uuid,
+    pub issue_type:       String,
+    pub description:      String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateHostelLeaveRequest {
+    pub departure_date:   NaiveDate,
+    pub return_date:      NaiveDate,
+    pub reason:           String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateMessMenuRequest {
+    pub day_of_week:      String,
+    pub meal_type:        String,
+    pub items:            String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateTicketStatusRequest {
+    pub status:           String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MessPreferenceRequest {
+    pub dietary_preference: String,
 }

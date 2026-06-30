@@ -205,6 +205,11 @@ p  { color: var(--color-text-secondary); line-height: 1.6; }
   text-decoration: none;
   position: relative;
   border-left: 2px solid transparent;
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
 }
 
 .sidebar-item:hover {

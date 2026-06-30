@@ -42,8 +42,19 @@ export default function Hostel() {
   const { can, role, isStudent, user } = usePermissions();
   const [rooms, setRooms] = useState<HostelRoom[]>([]);
   const [allocations, setAllocations] = useState<HostelAllocation[]>([]);
+  const hasActiveAllocation = isStudent && allocations.some(a => a.status === 'Active');
   const [students, setStudents] = useState<Student[]>([]);
-  const [activeTab, setActiveTab] = useState<'rooms' | 'allocate' | 'lodgers' | 'my-lodging'>('rooms');
+  const [activeTab, setActiveTab] = useState<'rooms' | 'allocate' | 'lodgers' | 'my-lodging' | 'tickets' | 'leaves' | 'mess'>('rooms');
+  
+  // Extra states
+  const [tickets, setTickets] = useState<any[]>([]);
+  const [leaves, setLeaves] = useState<any[]>([]);
+  const [menus, setMenus] = useState<any[]>([]);
+  const [messPreference, setMessPreference] = useState('Veg');
+
+  const [ticketForm, setTicketForm] = useState({ issue_type: 'Plumbing', description: '' });
+  const [leaveForm, setLeaveForm] = useState({ departure_date: '', return_date: '', reason: '' });
+  const [menuForm, setMenuForm] = useState({ day_of_week: 'Monday', meal_type: 'Breakfast', items: '' });
   
   // Loading states
   const [loadingRooms, setLoadingRooms] = useState(true);
@@ -115,12 +126,12 @@ export default function Hostel() {
         
         hostelApi.allocations.listStudent(sid)
           .then(r2 => setAllocations(r2.data.data ?? []))
-          .catch(() => {});
+          .catch(err => console.warn('Request failed:', err));
       })
       .catch(() => {
         hostelApi.allocations.listStudent(user?.user_id ?? '')
           .then(r => setAllocations(r.data.data ?? []))
-          .catch(() => {});
+          .catch(err => console.warn('Request failed:', err));
       })
       .finally(() => setLoadingAllocations(false));
   };
@@ -130,8 +141,26 @@ export default function Hostel() {
     setLoadingStudents(true);
     studentsApi.list({ limit: 100 })
       .then(r => setStudents(r.data.data ?? []))
-      .catch(() => {})
+      .catch(err => console.warn('Request failed:', err))
       .finally(() => setLoadingStudents(false));
+  };
+
+  const fetchTickets = () => {
+    hostelApi.maintenance.list()
+      .then(r => setTickets(r.data.data ?? []))
+      .catch(() => showAlert('Failed to load maintenance tickets'));
+  };
+
+  const fetchLeaves = () => {
+    hostelApi.leaves.list()
+      .then(r => setLeaves(r.data.data ?? []))
+      .catch(() => showAlert('Failed to load leave requests'));
+  };
+
+  const fetchMenus = () => {
+    hostelApi.mess.getMenus()
+      .then(r => setMenus(r.data.data ?? []))
+      .catch(() => showAlert('Failed to load mess menus'));
   };
 
   useEffect(() => {
@@ -139,9 +168,13 @@ export default function Hostel() {
     if (can('hostel.manage')) {
       fetchAllocations();
       fetchStudents();
+      fetchTickets();
+      fetchLeaves();
+      fetchMenus();
     } else if (isStudent) {
       fetchStudentAllocations();
       setActiveTab('my-lodging');
+      fetchMenus();
     }
   }, [role]);
 
@@ -200,6 +233,70 @@ export default function Hostel() {
       });
   };
 
+  const handleCreateTicket = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (allocations.length === 0) return showAlert('You need an active room allocation to report issues.');
+    hostelApi.maintenance.create({
+      room_id: allocations[0].room_id,
+      issue_type: ticketForm.issue_type,
+      description: ticketForm.description
+    })
+      .then(() => {
+        showAlert('Maintenance ticket submitted successfully!', false);
+        setTicketForm({ issue_type: 'Plumbing', description: '' });
+        fetchTickets();
+      })
+      .catch(() => showAlert('Failed to submit ticket'));
+  };
+
+  const handleResolveTicket = (ticketId: string) => {
+    hostelApi.maintenance.update(ticketId, { status: 'Resolved' })
+      .then(() => {
+        showAlert('Ticket marked as resolved!', false);
+        fetchTickets();
+      })
+      .catch(() => showAlert('Failed to update ticket'));
+  };
+
+  const handleCreateLeave = (e: React.FormEvent) => {
+    e.preventDefault();
+    hostelApi.leaves.create(leaveForm)
+      .then(() => {
+        showAlert('Leave request submitted successfully!', false);
+        setLeaveForm({ departure_date: '', return_date: '', reason: '' });
+        fetchLeaves();
+      })
+      .catch(() => showAlert('Failed to submit leave request'));
+  };
+
+  const handleApproveLeave = (leaveId: string, approve: boolean) => {
+    const action = approve ? hostelApi.leaves.approve : hostelApi.leaves.reject;
+    action(leaveId)
+      .then(() => {
+        showAlert(`Leave request ${approve ? 'approved' : 'rejected'} successfully!`, false);
+        fetchLeaves();
+      })
+      .catch(() => showAlert('Failed to update leave request'));
+  };
+
+  const handleUpdateMessPreference = (e: React.FormEvent) => {
+    e.preventDefault();
+    hostelApi.mess.setPreference({ dietary_preference: messPreference })
+      .then(() => showAlert('Mess preference updated successfully!', false))
+      .catch(() => showAlert('Failed to update preference'));
+  };
+
+  const handleCreateMenu = (e: React.FormEvent) => {
+    e.preventDefault();
+    hostelApi.mess.createMenu(menuForm)
+      .then(() => {
+        showAlert('Menu item updated!', false);
+        setMenuForm({ day_of_week: 'Monday', meal_type: 'Breakfast', items: '' });
+        fetchMenus();
+      })
+      .catch(() => showAlert('Failed to update menu'));
+  };
+
   // Filters
   const filteredRooms = rooms.filter(r => 
     r.hostel_name.toLowerCase().includes(roomSearch.toLowerCase()) ||
@@ -237,15 +334,38 @@ export default function Hostel() {
           </div>
         )}
 
-        {/* Tab switcher */}
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: '1.5rem', gap: '1rem' }}>
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: '1.5rem', gap: '1rem', flexWrap: 'wrap' }}>
           {isStudent ? (
-            <button 
-              onClick={() => setActiveTab('my-lodging')} 
-              style={{ background: 'none', border: 'none', borderBottom: activeTab === 'my-lodging' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'my-lodging' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
-            >
-              🏢 My Stay Allotment
-            </button>
+            <>
+              <button 
+                onClick={() => setActiveTab('my-lodging')} 
+                style={{ background: 'none', border: 'none', borderBottom: activeTab === 'my-lodging' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'my-lodging' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
+              >
+                🏢 My Stay Allotment
+              </button>
+              {hasActiveAllocation && (
+                <>
+                  <button 
+                    onClick={() => setActiveTab('tickets')} 
+                    style={{ background: 'none', border: 'none', borderBottom: activeTab === 'tickets' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'tickets' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
+                  >
+                    🔧 Maintenance
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab('leaves')} 
+                    style={{ background: 'none', border: 'none', borderBottom: activeTab === 'leaves' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'leaves' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
+                  >
+                    📝 Leave Request
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab('mess')} 
+                    style={{ background: 'none', border: 'none', borderBottom: activeTab === 'mess' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'mess' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
+                  >
+                    🍽️ Mess Menu
+                  </button>
+                </>
+              )}
+            </>
           ) : (
             <>
               <button 
@@ -265,6 +385,24 @@ export default function Hostel() {
                 style={{ background: 'none', border: 'none', borderBottom: activeTab === 'lodgers' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'lodgers' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
               >
                 👥 Active Lodgers ({activeLodgersCount})
+              </button>
+              <button 
+                onClick={() => setActiveTab('tickets')} 
+                style={{ background: 'none', border: 'none', borderBottom: activeTab === 'tickets' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'tickets' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
+              >
+                🔧 Maintenance Tickets
+              </button>
+              <button 
+                onClick={() => setActiveTab('leaves')} 
+                style={{ background: 'none', border: 'none', borderBottom: activeTab === 'leaves' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'leaves' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
+              >
+                📝 Leave Requests
+              </button>
+              <button 
+                onClick={() => setActiveTab('mess')} 
+                style={{ background: 'none', border: 'none', borderBottom: activeTab === 'mess' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'mess' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
+              >
+                🍽️ Manage Mess
               </button>
             </>
           )}
@@ -607,6 +745,161 @@ export default function Hostel() {
           </div>
         )}
 
+        {/* Tab 5: Maintenance */}
+        {activeTab === 'tickets' && (
+          <div style={{ display: 'grid', gridTemplateColumns: isStudent ? '1fr' : '1fr', gap: '1.5rem' }}>
+            {isStudent && (
+              <div className="card" style={{ padding: '1.5rem', border: '1px solid var(--border)' }}>
+                <h3>🔧 Log Maintenance Issue</h3>
+                <form onSubmit={handleCreateTicket} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
+                  <div className="form-group">
+                    <label className="form-label">Issue Type</label>
+                    <select className="form-input" value={ticketForm.issue_type} onChange={e => setTicketForm({...ticketForm, issue_type: e.target.value})}>
+                      <option value="Plumbing">Plumbing</option>
+                      <option value="Electrical">Electrical</option>
+                      <option value="Furniture">Furniture</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Description</label>
+                    <textarea className="form-input" placeholder="e.g. Fan speed regulator is broken" value={ticketForm.description} onChange={e => setTicketForm({...ticketForm, description: e.target.value})} required />
+                  </div>
+                  <button type="submit" className="btn btn-primary">Submit Ticket</button>
+                </form>
+              </div>
+            )}
+
+            <div className="card" style={{ padding: '1.5rem', border: '1px solid var(--border)' }}>
+              <h3>🔧 Active Tickets</h3>
+              <div style={{ marginTop: '1rem' }}>
+                {tickets.length === 0 ? <p>No maintenance tickets raised.</p> : tickets.map((t: any) => (
+                  <div key={t.ticket_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '1rem', borderBottom: '1px solid var(--border)' }}>
+                    <div>
+                      <strong>{t.issue_type}</strong> - {t.description}
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Status: {t.status}</div>
+                    </div>
+                    {!isStudent && t.status !== 'Resolved' && (
+                      <button className="btn btn-primary btn-sm" onClick={() => handleResolveTicket(t.ticket_id)}>Mark Resolved</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 6: Leave Requests */}
+        {activeTab === 'leaves' && (
+          <div style={{ display: 'grid', gridTemplateColumns: isStudent ? '1fr' : '1fr', gap: '1.5rem' }}>
+            {isStudent && (
+              <div className="card" style={{ padding: '1.5rem', border: '1px solid var(--border)' }}>
+                <h3>📝 Request Leave</h3>
+                <form onSubmit={handleCreateLeave} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
+                  <div className="form-group">
+                    <label className="form-label">Departure Date</label>
+                    <input type="date" className="form-input" value={leaveForm.departure_date} onChange={e => setLeaveForm({...leaveForm, departure_date: e.target.value})} required />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Return Date</label>
+                    <input type="date" className="form-input" value={leaveForm.return_date} onChange={e => setLeaveForm({...leaveForm, return_date: e.target.value})} required />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Reason</label>
+                    <textarea className="form-input" placeholder="Warden permission reason..." value={leaveForm.reason} onChange={e => setLeaveForm({...leaveForm, reason: e.target.value})} required />
+                  </div>
+                  <button type="submit" className="btn btn-primary">Request Leave</button>
+                </form>
+              </div>
+            )}
+
+            <div className="card" style={{ padding: '1.5rem', border: '1px solid var(--border)' }}>
+              <h3>📝 Leave History</h3>
+              <div style={{ marginTop: '1rem' }}>
+                {leaves.length === 0 ? <p>No leaves requested.</p> : leaves.map((l: any) => (
+                  <div key={l.leave_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '1rem', borderBottom: '1px solid var(--border)' }}>
+                    <div>
+                      <strong>Leave from {l.departure_date} to {l.return_date}</strong>
+                      <p style={{ margin: '0.25rem 0', fontSize: '0.85rem' }}>{l.reason}</p>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Status: {l.status}</div>
+                    </div>
+                    {!isStudent && l.status === 'Pending' && (
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button className="btn btn-primary btn-sm" onClick={() => handleApproveLeave(l.leave_id, true)}>Approve</button>
+                        <button className="btn btn-secondary btn-sm" onClick={() => handleApproveLeave(l.leave_id, false)}>Reject</button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 7: Mess Management */}
+        {activeTab === 'mess' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }}>
+            {isStudent ? (
+              <div className="card" style={{ padding: '1.5rem', border: '1px solid var(--border)' }}>
+                <h3>🍽️ Dietary Preference</h3>
+                <form onSubmit={handleUpdateMessPreference} style={{ display: 'flex', gap: '1rem', alignItems: 'center', marginTop: '1rem' }}>
+                  <select className="form-input" value={messPreference} onChange={e => setMessPreference(e.target.value)}>
+                    <option value="Veg">Vegetarian</option>
+                    <option value="Non-Veg">Non-Vegetarian</option>
+                    <option value="Vegan">Vegan</option>
+                    <option value="Eggitarian">Eggitarian</option>
+                  </select>
+                  <button type="submit" className="btn btn-primary">Update Preference</button>
+                </form>
+              </div>
+            ) : (
+              <div className="card" style={{ padding: '1.5rem', border: '1px solid var(--border)' }}>
+                <h3>🍽️ Add Mess Menu Items</h3>
+                <form onSubmit={handleCreateMenu} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
+                  <div className="form-group">
+                    <label className="form-label">Day of Week</label>
+                    <select className="form-input" value={menuForm.day_of_week} onChange={e => setMenuForm({...menuForm, day_of_week: e.target.value})}>
+                      <option value="Monday">Monday</option>
+                      <option value="Tuesday">Tuesday</option>
+                      <option value="Wednesday">Wednesday</option>
+                      <option value="Thursday">Thursday</option>
+                      <option value="Friday">Friday</option>
+                      <option value="Saturday">Saturday</option>
+                      <option value="Sunday">Sunday</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Meal Type</label>
+                    <select className="form-input" value={menuForm.meal_type} onChange={e => setMenuForm({...menuForm, meal_type: e.target.value})}>
+                      <option value="Breakfast">Breakfast</option>
+                      <option value="Lunch">Lunch</option>
+                      <option value="Dinner">Dinner</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Items</label>
+                    <input type="text" className="form-input" placeholder="e.g. Idli, Sambhar, Chutney" value={menuForm.items} onChange={e => setMenuForm({...menuForm, items: e.target.value})} required />
+                  </div>
+                  <button type="submit" className="btn btn-primary">Save Menu</button>
+                </form>
+              </div>
+            )}
+
+            <div className="card" style={{ padding: '1.5rem', border: '1px solid var(--border)' }}>
+              <h3>🍽️ Weekly Mess Menu</h3>
+              <div style={{ marginTop: '1rem' }}>
+                {menus.length === 0 ? <p>No mess menus configured yet.</p> : menus.map((m: any) => (
+                  <div key={m.menu_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem 0', borderBottom: '1px solid var(--border)' }}>
+                    <div>
+                      <strong>{m.day_of_week} - {m.meal_type}</strong>
+                    </div>
+                    <div>{m.items}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </>
   );

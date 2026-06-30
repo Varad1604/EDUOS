@@ -18,7 +18,13 @@ impl AppState {
         let db = crate::db::create_pool(&config.database).await?;
 
         // Redis pool
-        let redis_cfg = deadpool_redis::Config::from_url(&config.redis.url);
+        let mut redis_cfg = deadpool_redis::Config::from_url(&config.redis.url);
+        let mut pool_config = deadpool_redis::PoolConfig::new(config.redis.pool_max_size);
+        pool_config.timeouts.wait = Some(std::time::Duration::from_secs(config.redis.pool_timeout_secs));
+        pool_config.timeouts.create = Some(std::time::Duration::from_secs(10));
+        pool_config.timeouts.recycle = Some(std::time::Duration::from_secs(10));
+        redis_cfg.pool = Some(pool_config);
+        
         let redis = redis_cfg
             .create_pool(Some(deadpool_redis::Runtime::Tokio1))?;
 

@@ -2,22 +2,14 @@ use axum::{
     extract::{Path, State},
     Extension, Json,
 };
-use serde_json::json;
 use uuid::Uuid;
 use crate::{
     error::AppError,
     middleware::auth::Claims,
     modules::transport::{models::*, service},
+    response::ok,
     state::AppState,
 };
-
-fn ok<T: serde::Serialize>(data: T) -> Json<serde_json::Value> {
-    Json(json!({
-        "success": true,
-        "data": data,
-        "meta": { "timestamp": chrono::Utc::now() }
-    }))
-}
 
 pub async fn create_route(
     State(state): State<AppState>,
@@ -103,4 +95,55 @@ pub async fn list_student_allocations(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let allocations = service::list_student_allocations(&state.db, &claims, student_id).await?;
     Ok(ok(allocations))
+}
+
+pub async fn create_driver(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(body): Json<CreateDriverRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let driver = service::create_driver(&state.db, &claims, body).await?;
+    Ok(ok(driver))
+}
+
+pub async fn list_drivers(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let drivers = service::list_drivers(&state.db, &claims).await?;
+    Ok(ok(drivers))
+}
+
+pub async fn create_trip_log(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(body): Json<CreateTripLogRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let trip = service::create_trip_log(&state.db, &claims, body).await?;
+    Ok(ok(trip))
+}
+
+pub async fn update_trip_status(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(log_id): Path<Uuid>,
+    Json(body): Json<UpdateTripStatusRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let trip = service::update_trip_status(&state.db, &claims, log_id, body).await?;
+    Ok(ok(trip))
+}
+
+pub async fn list_trip_logs(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let trips = service::list_trip_logs(&state.db, &claims).await?;
+    Ok(ok(trips))
+}
+
+pub async fn get_live_gps_simulation(
+    Path(route_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let gps = service::get_live_gps_simulation(route_id).await?;
+    Ok(Json(gps))
 }

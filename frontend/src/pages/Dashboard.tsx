@@ -91,15 +91,7 @@ function AdminDashboard() {
   const [recentExams, setRecentExams] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [hoveredBar, setHoveredBar] = useState<number | null>(null);
-
-  const BARS = [65, 80, 55, 90, 72, 85, 60, 78, 88, 70, 92, 76];
-  const currentMonth = new Date().getMonth();
-  const totalWeight = BARS.slice(0, currentMonth + 1).reduce((sum, w) => sum + w, 0);
-
-  const dynamicBars = BARS.map((weight, idx) => {
-    if (idx > currentMonth) return 0;
-    return totalWeight > 0 ? (weight / totalWeight) * stats.income : 0;
-  });
+  const [collectionTrend, setCollectionTrend] = useState<number[]>(Array(12).fill(0));
 
   useEffect(() => {
     Promise.allSettled([
@@ -110,7 +102,8 @@ function AdminDashboard() {
       financeApi.scholarships.list(),
       financeApi.accounts.list(),
       studentsApi.list({ limit: 5, sort: 'cgpa_desc' }),
-    ]).then(([sR, cR, eR, fsR, scR, acR, topR]) => {
+      financeApi.reports.feeCollectionTrend(),
+    ]).then(([sR, cR, eR, fsR, scR, acR, topR, trendR]) => {
       const students = sR.status === 'fulfilled' ? (sR.value.data.meta?.pagination?.total ?? 0) : 0;
       const courses  = cR.status === 'fulfilled' ? (cR.value.data.data?.length ?? 0) : 0;
       const exams    = eR.status === 'fulfilled' ? (eR.value.data.data?.length ?? 0) : 0;
@@ -128,6 +121,17 @@ function AdminDashboard() {
         const all: any[] = topR.value.data.data ?? [];
         const sorted = all.filter(s => s.cgpa).sort((a, b) => parseFloat(b.cgpa) - parseFloat(a.cgpa)).slice(0, 5);
         setTopStudents(sorted);
+      }
+      if (trendR.status === 'fulfilled') {
+        const trendData = trendR.value.data.data ?? [];
+        const monthlyAmounts = Array(12).fill(0);
+        trendData.forEach((item: any) => {
+          const m = parseInt(item.month);
+          if (m >= 1 && m <= 12) {
+            monthlyAmounts[m - 1] = parseFloat(item.total || '0');
+          }
+        });
+        setCollectionTrend(monthlyAmounts);
       }
     }).finally(() => setLoading(false));
   }, []);
@@ -180,7 +184,7 @@ function AdminDashboard() {
               boxShadow: 'var(--shadow)',
               animation: 'fadeIn 0.2s ease both',
             }}>
-              <strong>{MONTHS[hoveredBar]}</strong>: ₹{dynamicBars[hoveredBar].toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              <strong>{MONTHS[hoveredBar]}</strong>: ₹{collectionTrend[hoveredBar].toLocaleString('en-IN', { maximumFractionDigits: 0 })}
             </div>
           )}
 
@@ -198,11 +202,12 @@ function AdminDashboard() {
 
               <line x1="40" y1="170" x2="570" y2="170" stroke="var(--color-border)" strokeWidth={1.5} />
 
-              {BARS.map((h, i) => {
+              {collectionTrend.map((amount, i) => {
+                const maxAmount = Math.max(...collectionTrend, 10000);
                 const slotWidth = 530 / 12;
                 const barWidth = 20;
                 const x = 40 + i * slotWidth + (slotWidth - barWidth) / 2;
-                const barHeight = i <= currentMonth ? (h / 100) * 130 : 0;
+                const barHeight = (amount / maxAmount) * 130;
                 const y = 170 - barHeight;
 
                 return (
@@ -323,7 +328,7 @@ function FeeManagerDashboard() {
       setStructures(fs.data.data ?? []);
       setScholarships(sc.data.data ?? []);
       setAccounts(ac.data.data ?? []);
-    }).catch(() => {}).finally(() => setLoading(false));
+    }).catch(err => console.warn('Request failed:', err)).finally(() => setLoading(false));
   }, []);
 
   const totalAssets = accounts.filter(a => a.account_type === 'Asset').reduce((s, a) => s + parseFloat(a.current_balance || '0'), 0);
@@ -411,7 +416,7 @@ function FacultyDashboard() {
     ]).then(([c, e]) => {
       setCourses(c.data.data ?? []);
       setExams((e.data.data ?? []).slice(0, 5));
-    }).catch(() => {}).finally(() => setLoading(false));
+    }).catch(err => console.warn('Request failed:', err)).finally(() => setLoading(false));
   }, []);
 
   if (loading) return <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading faculty data…</div>;
@@ -512,15 +517,13 @@ function StudentDashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    studentsApi.list({ limit: 100 }).then(r => {
-      const students = r.data.data ?? [];
-      const me = students.find((s: any) => s.person?.email === `${user?.username}@eduos.org`
-        || s.person?.email?.toLowerCase().includes(user?.username?.toLowerCase() ?? ''));
+    studentsApi.getMyProfile().then(r => {
+      const me = r.data?.data;
       if (me) {
         examinationApi.results.get(me.student_id)
-          .then(res => setResults(res.data.data ?? [])).catch(() => {});
+          .then(res => setResults(res.data.data ?? [])).catch(err => console.warn('Request failed:', err));
         financeApi.allocations.summary(me.student_id)
-          .then(res => setFeeSummary(res.data.data)).catch(() => {});
+          .then(res => setFeeSummary(res.data.data)).catch(err => console.warn('Request failed:', err));
 
         academicsApi.courses.list().then(cRes => {
           const list = cRes.data.data ?? [];
@@ -539,10 +542,10 @@ function StudentDashboard() {
           });
         });
       }
-    }).catch(() => {});
+    }).catch(err => console.warn('Request failed:', err));
 
     examinationApi.exams.list()
-      .then(r => setExams((r.data.data ?? []).slice(0, 4))).catch(() => {});
+      .then(r => setExams((r.data.data ?? []).slice(0, 4))).catch(err => console.warn('Request failed:', err));
     setLoading(false);
   }, [user?.username]);
 

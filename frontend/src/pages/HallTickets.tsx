@@ -114,7 +114,7 @@ function MyHallTicket() {
 
 // ─── Admin: generate + view all tickets ──────────────────────────────────────
 function AdminHallTickets() {
-  const { can } = usePermissions();
+  const { isAdmin } = usePermissions();
   const [exams, setExams] = useState<Exam[]>([]);
   const [selectedExamId, setSelectedExamId] = useState('');
   const [tickets, setTickets] = useState<HallTicket[]>([]);
@@ -124,7 +124,7 @@ function AdminHallTickets() {
 
   const loadExams = () => {
     setLoading(true);
-    examinationApi.exams.list().then(r => setExams(r.data.data ?? [])).catch(() => {}).finally(() => setLoading(false));
+    examinationApi.exams.list().then(r => setExams(r.data.data ?? [])).catch(err => console.warn('Request failed:', err)).finally(() => setLoading(false));
   };
 
   useEffect(() => { loadExams(); }, []);
@@ -147,7 +147,7 @@ function AdminHallTickets() {
   }, [selectedExamId]);
 
   const handleGenerate = (examId: string) => {
-    if (!can('halltickets.generate')) return;
+    if (!isAdmin) return;
     setError(''); setMessage(''); setLoading(true);
     api.post(`/exams/${examId}/hall-tickets`, {})
       .then((r: any) => { setMessage(`Generated ${r.data.data?.count ?? 0} hall tickets!`); loadExams(); setSelectedExamId(examId); })
@@ -197,10 +197,10 @@ function AdminHallTickets() {
               <div className="table-wrap">
                 <table>
                   <thead>
-                    <tr>
-                      <th>Exam Code</th><th>Course</th><th>Date</th><th>Ticket Status</th>
-                      {can('halltickets.generate') && <th>Actions</th>}
-                    </tr>
+                     <tr>
+                       <th>Exam Code</th><th>Course</th><th>Date</th><th>Ticket Status</th>
+                       {isAdmin && <th>Actions</th>}
+                     </tr>
                   </thead>
                   <tbody>
                     {exams.map(e => (
@@ -209,15 +209,15 @@ function AdminHallTickets() {
                         <td>{e.course_code} — {e.course_name}</td>
                         <td>{e.scheduled_date}</td>
                         <td><span className={`badge ${e.hall_tickets_generated ? 'badge-success' : 'badge-warning'}`}>{e.hall_tickets_generated ? 'Issued' : 'Pending'}</span></td>
-                        {can('halltickets.generate') && (
-                          <td>
-                            {e.hall_tickets_generated ? (
-                              <button className="btn btn-secondary btn-sm" onClick={() => setSelectedExamId(e.exam_id)}>View Tickets</button>
-                            ) : (
-                              <button className="btn btn-primary btn-sm" onClick={() => handleGenerate(e.exam_id)}>Generate</button>
-                            )}
-                          </td>
-                        )}
+                         {isAdmin && (
+                           <td>
+                             {e.hall_tickets_generated ? (
+                               <button className="btn btn-secondary btn-sm" onClick={() => setSelectedExamId(e.exam_id)}>View Tickets</button>
+                             ) : (
+                               <button className="btn btn-primary btn-sm" onClick={() => handleGenerate(e.exam_id)}>Generate</button>
+                             )}
+                           </td>
+                         )}
                       </tr>
                     ))}
                   </tbody>
@@ -235,7 +235,7 @@ function AdminHallTickets() {
 export default function HallTickets() {
   const { can, isStudent } = usePermissions();
 
-  if (!can('halltickets.generate') && !can('halltickets.viewOwn')) {
+  if (!can('exams.read')) {
     return (
       <>
         <Header title="Hall Tickets" subtitle="Access denied" />

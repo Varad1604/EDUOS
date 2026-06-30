@@ -12,6 +12,7 @@ pub fn router() -> Router<AppState> {
         .route("/fee-allocations",                          post(handlers::allocate_fee))
         .route("/fee-allocations/:student_id",              get(handlers::get_student_fee_summary))
         .route("/payments",                                 post(handlers::initiate_payment))
+        .route("/payments/razorpay/verify",                 post(handlers::verify_razorpay))
         .route("/payments/:student_id",                     get(handlers::get_payments))
         .route("/scholarships",                             post(handlers::create_scholarship))
         .route("/scholarships",                             get(handlers::list_scholarships))
@@ -24,5 +25,14 @@ pub fn router() -> Router<AppState> {
         .route("/reports/balance-sheet",                    get(handlers::balance_sheet))
         .route("/reports/income-statement",                 get(handlers::income_statement))
         .route("/reports/audit-logs",                       get(handlers::audit_logs))
+        .route("/reports/fee-collection-trend",             get(handlers::get_fee_collection_trend))
+        .route("/fiscal-years",                             post(handlers::create_fiscal_year))
+        .route("/fiscal-years/:id/lock",                    patch(handlers::lock_fiscal_year))
+        .route("/bank-statements",                          post(handlers::upload_bank_statement))
+        .route("/late-fees/policy",                         post(handlers::create_late_fee_policy))
+        .route("/late-fees/apply",                          post(handlers::apply_late_fees))
+        .route("/installments",                             post(handlers::create_installment_plan))
+        .route("/waivers",                                  post(handlers::request_fee_waiver))
+        .route("/waivers/:id/approve",                      patch(handlers::approve_fee_waiver))
 }
 

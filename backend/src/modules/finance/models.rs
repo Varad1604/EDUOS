@@ -111,6 +111,81 @@ pub struct JournalEntry {
     pub created_at:     DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct FiscalYear {
+    pub fiscal_year_id: Uuid,
+    pub institution_id: Uuid,
+    pub name:           String,
+    pub start_date:     NaiveDate,
+    pub end_date:       NaiveDate,
+    pub is_locked:      bool,
+    pub created_at:     DateTime<Utc>,
+    pub updated_at:     DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct BankStatement {
+    pub statement_id:   Uuid,
+    pub institution_id: Uuid,
+    pub account_number: String,
+    pub statement_date: NaiveDate,
+    pub uploaded_by:    Uuid,
+    pub created_at:     DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct BankStatementLine {
+    pub line_id:          Uuid,
+    pub statement_id:     Uuid,
+    pub transaction_date: NaiveDate,
+    pub description:      Option<String>,
+    pub reference_id:     Option<String>,
+    pub amount:           String,
+    pub is_reconciled:    bool,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct LateFeePolicy {
+    pub policy_id:         Uuid,
+    pub institution_id:    Uuid,
+    pub fee_structure_id:  Option<Uuid>,
+    pub penalty_amount:    String,
+    pub penalty_type:      String,
+    pub grace_period_days: i32,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct InstallmentPlan {
+    pub plan_id:            Uuid,
+    pub allocation_id:      Uuid,
+    pub total_amount:       String,
+    pub installments_count: i32,
+    pub created_at:         DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct InstallmentSchedule {
+    pub schedule_id: Uuid,
+    pub plan_id:     Uuid,
+    pub amount_due:  String,
+    pub due_date:    NaiveDate,
+    pub status:      String,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct FeeWaiverRequestRow {
+    pub waiver_id:        Uuid,
+    pub institution_id:   Uuid,
+    pub student_id:       Uuid,
+    pub allocation_id:    Uuid,
+    pub requested_amount: String,
+    pub reason:           String,
+    pub status:           String,
+    pub approved_by:      Option<Uuid>,
+    pub created_at:       DateTime<Utc>,
+    pub updated_at:       DateTime<Utc>,
+}
+
 // ── Request Types ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Validate)]
@@ -209,6 +284,55 @@ pub struct FeeListQuery {
     pub limit:         Option<u32>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CreateFiscalYearRequest {
+    pub name:       String,
+    pub start_date: NaiveDate,
+    pub end_date:   NaiveDate,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UploadBankStatementLineRequest {
+    pub transaction_date: NaiveDate,
+    pub description:      Option<String>,
+    pub reference_id:     Option<String>,
+    pub amount:           f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UploadBankStatementRequest {
+    pub account_number: String,
+    pub statement_date: NaiveDate,
+    pub lines:          Vec<UploadBankStatementLineRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateLateFeePolicyRequest {
+    pub fee_structure_id:  Option<Uuid>,
+    pub penalty_amount:    f64,
+    pub penalty_type:      String,
+    pub grace_period_days: i32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateInstallmentPlanRequest {
+    pub allocation_id:      Uuid,
+    pub installments_count: i32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateFeeWaiverRequest {
+    pub allocation_id:    Uuid,
+    pub requested_amount: f64,
+    pub reason:           String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReconcileRequest {
+    pub payment_id: Uuid,
+    pub line_id:    Uuid,
+}
+
 // ── Response ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -218,4 +342,10 @@ pub struct FeeSummary {
     pub total_paid:  f64,
     pub outstanding: f64,
     pub allocations: Vec<FeeAllocation>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct MonthlyTrend {
+    pub month: Option<i32>,
+    pub total: Option<String>,
 }

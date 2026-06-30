@@ -20,6 +20,7 @@ export default function AuditLogs() {
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
+  const [inspectorTab, setInspectorTab] = useState<'diff' | 'raw'>('diff');
 
   // Enforce access control
   if (!isAdmin) {
@@ -197,20 +198,89 @@ export default function AuditLogs() {
                     {selectedLog.aggregate_id}
                   </code>
                 </div>
-                <div>
-                  <label className="form-label" style={{ marginBottom: '0.25rem' }}>Payload JSON</label>
-                  <pre style={{
-                    fontSize: '0.8rem',
-                    background: 'var(--bg-card-hover)',
-                    padding: '0.75rem',
-                    borderRadius: 6,
-                    overflow: 'auto',
-                    maxHeight: '300px',
-                    border: '1px solid var(--border-color)',
-                    color: 'var(--text-main)',
-                  }}>
-                    {JSON.stringify(selectedLog.event_payload, null, 2)}
-                  </pre>
+                 <div>
+                  <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', marginBottom: '0.75rem', gap: '0.5rem' }}>
+                    <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '0.75rem', borderBottom: inspectorTab === 'diff' ? '2px solid var(--accent-primary)' : 'none' }} onClick={() => setInspectorTab('diff')}>State Diff View</button>
+                    <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '0.75rem', borderBottom: inspectorTab === 'raw' ? '2px solid var(--accent-primary)' : 'none' }} onClick={() => setInspectorTab('raw')}>Raw JSON</button>
+                  </div>
+
+                  {inspectorTab === 'raw' ? (
+                    <pre style={{
+                      fontSize: '0.8rem',
+                      background: 'var(--bg-card-hover)',
+                      padding: '0.75rem',
+                      borderRadius: 6,
+                      overflow: 'auto',
+                      maxHeight: '300px',
+                      border: '1px solid var(--border-color)',
+                      color: 'var(--text-main)',
+                    }}>
+                      {JSON.stringify(selectedLog.event_payload, null, 2)}
+                    </pre>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      {(() => {
+                        const payload = selectedLog.event_payload || {};
+                        const before = (payload.before || payload.old_state || {}) as Record<string, any>;
+                        const after = (payload.after || payload.new_state || payload) as Record<string, any>;
+                        
+                        const hasDiff = Object.keys(before).length > 0;
+                        const allKeys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)]));
+
+                        if (!hasDiff) {
+                          // No direct diff structure, show flat parameter list
+                          return (
+                            <table style={{ width: '100%', fontSize: '0.8rem', borderCollapse: 'collapse' }}>
+                              <thead>
+                                <tr style={{ borderBottom: '1px solid var(--border-color)', textAlign: 'left' }}>
+                                  <th style={{ padding: '6px' }}>Parameter</th>
+                                  <th style={{ padding: '6px' }}>Value</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {Object.keys(payload).map(k => (
+                                  <tr key={k} style={{ borderBottom: '1px dashed var(--border-color)' }}>
+                                    <td style={{ padding: '6px', fontWeight: 600 }}>{k}</td>
+                                    <td style={{ padding: '6px', wordBreak: 'break-all' }}>{JSON.stringify(payload[k])}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          );
+                        }
+
+                        return (
+                          <table style={{ width: '100%', fontSize: '0.8rem', borderCollapse: 'collapse' }}>
+                            <thead>
+                              <tr style={{ borderBottom: '1px solid var(--border-color)', textAlign: 'left' }}>
+                                <th style={{ padding: '6px' }}>Field</th>
+                                <th style={{ padding: '6px', color: '#ef4444' }}>Before</th>
+                                <th style={{ padding: '6px', color: '#10b981' }}>After</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {allKeys.map(k => {
+                                const oldVal = before[k];
+                                const newVal = after[k];
+                                const isChanged = oldVal !== newVal;
+                                return (
+                                  <tr key={k} style={{ borderBottom: '1px dashed var(--border-color)', background: isChanged ? 'rgba(245, 158, 11, 0.05)' : 'transparent' }}>
+                                    <td style={{ padding: '6px', fontWeight: 600 }}>{k}</td>
+                                    <td style={{ padding: '6px', color: isChanged ? '#ef4444' : 'inherit', textDecoration: isChanged ? 'line-through' : 'none', wordBreak: 'break-all' }}>
+                                      {oldVal !== undefined ? JSON.stringify(oldVal) : <span style={{ color: 'var(--text-muted)' }}>none</span>}
+                                    </td>
+                                    <td style={{ padding: '6px', color: isChanged ? '#10b981' : 'inherit', fontWeight: isChanged ? 600 : 'normal', wordBreak: 'break-all' }}>
+                                      {newVal !== undefined ? JSON.stringify(newVal) : <span style={{ color: 'var(--text-muted)' }}>none</span>}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (

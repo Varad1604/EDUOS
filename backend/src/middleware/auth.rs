@@ -14,8 +14,10 @@ use crate::{error::AppError, state::AppState};
 pub struct Claims {
     pub sub:            Uuid,     // user_id
     pub institution_id: Uuid,
+    pub branch_id:      Option<Uuid>,
     pub role_id:        Uuid,
     pub role_name:      String,
+    pub jti:            String,   // JWT ID for blacklisting
     pub exp:            i64,      // Unix timestamp
     pub iat:            i64,
 }
@@ -41,6 +43,19 @@ pub async fn require_auth(
     .map_err(|e| AppError::Unauthorized(format!("Invalid token: {}", e)))?;
 
     let claims = token_data.claims;
+
+    // Check Redis blacklist
+    let mut redis_conn = state.redis.get().await.map_err(|_| AppError::Internal(anyhow::anyhow!("Redis error")))?;
+    let key = format!("bl_token:{}", claims.jti);
+    let is_blacklisted: Option<String> = redis::cmd("GET")
+        .arg(&key)
+        .query_async(&mut redis_conn)
+        .await
+        .unwrap_or(None);
+
+    if is_blacklisted.is_some() {
+        return Err(AppError::Unauthorized("Token revoked".into()));
+    }
 
     // Check user is still active in DB (optional but recommended)
     let is_active: Option<bool> = sqlx::query_scalar(

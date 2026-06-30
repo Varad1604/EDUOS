@@ -21,6 +21,7 @@ pub struct Exam {
     pub min_marks:           i32,
     pub invigilator_faculty_id: Option<Uuid>,
     pub hall_tickets_generated: bool,
+    pub require_seating:     bool,
     pub created_at:          DateTime<Utc>,
     pub soft_deleted:        bool,
 }
@@ -51,6 +52,7 @@ pub struct MarksRow {
     pub revaluation_status:  String,
     pub revaluation_marks:   Option<String>,
     pub entered_by_faculty_id: Uuid,
+    pub status:              String,
     pub entered_at:          DateTime<Utc>,
     pub soft_deleted:        bool,
 }
@@ -84,6 +86,50 @@ pub struct Transcript {
     pub file_url:            Option<String>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct GracePolicy {
+    pub policy_id:          Uuid,
+    pub institution_id:     Uuid,
+    pub course_id:          Option<Uuid>,
+    pub max_grace_marks:    i32,
+    pub min_original_marks: i32,
+    pub created_at:         DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct SeatingArrangement {
+    pub arrangement_id: Uuid,
+    pub exam_id:        Uuid,
+    pub student_id:     Uuid,
+    pub room_number:    String,
+    pub seat_number:    String,
+    pub created_at:     DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct SupplementaryExam {
+    pub supp_exam_id:     Uuid,
+    pub original_exam_id: Uuid,
+    pub student_id:       Uuid,
+    pub fee_paid:         bool,
+    pub scheduled_date:   Option<NaiveDate>,
+    pub scheduled_time:   Option<NaiveTime>,
+    pub status:           String,
+    pub created_at:       DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct MarkModeration {
+    pub moderation_id:   Uuid,
+    pub exam_id:         Uuid,
+    pub student_id:      Uuid,
+    pub original_marks:  f64,
+    pub moderated_marks: f64,
+    pub reason:          String,
+    pub created_by:      Option<Uuid>,
+    pub created_at:      DateTime<Utc>,
+}
+
 // ── Request Types ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Validate)]
@@ -99,6 +145,7 @@ pub struct CreateExamRequest {
     pub max_marks:       Option<i32>,
     pub min_marks:       Option<i32>,
     pub invigilator_faculty_id: Option<Uuid>,
+    pub require_seating: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,6 +186,29 @@ pub struct RevaluationRequest {
 pub struct GenerateTranscriptRequest {
     pub student_id:      Uuid,
     pub transcript_type: String,  // Provisional | Official
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateGracePolicyRequest {
+    pub course_id:          Option<Uuid>,
+    pub max_grace_marks:    i32,
+    pub min_original_marks: i32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ScheduleSupplementaryExamRequest {
+    pub original_exam_id: Uuid,
+    pub student_id:       Uuid,
+    pub scheduled_date:   NaiveDate,
+    pub scheduled_time:   NaiveTime,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApplyModerationRequest {
+    pub exam_id:         Uuid,
+    pub student_id:      Uuid,
+    pub moderated_marks: f64,
+    pub reason:          String,
 }
 
 #[derive(Debug, Deserialize)]

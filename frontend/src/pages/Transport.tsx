@@ -67,13 +67,22 @@ export default function Transport() {
   const [stops, setStops] = useState<TransportStop[]>([]);
   const [vehicles, setVehicles] = useState<TransportVehicle[]>([]);
   const [allocations, setAllocations] = useState<TransportAllocation[]>([]);
+  const hasActiveAllocation = isStudent && allocations.some(a => a.status === 'Active');
   const [students, setStudents] = useState<Student[]>([]);
   
   // Selected state for stop listing
   const [selectedRouteId, setSelectedRouteId] = useState<string>('');
   
   // Tab control
-  const [activeTab, setActiveTab] = useState<'routes' | 'vehicles' | 'allocate' | 'passengers' | 'my-transport'>('routes');
+  const [activeTab, setActiveTab] = useState<'routes' | 'vehicles' | 'allocate' | 'passengers' | 'my-transport' | 'drivers' | 'trips' | 'gps'>('routes');
+  
+  // Extra states
+  const [drivers, setDrivers] = useState<any[]>([]);
+  const [trips, setTrips] = useState<any[]>([]);
+  const [gpsData, setGpsData] = useState<any>(null);
+
+  const [newDriver, setNewDriver] = useState({ name: '', license_number: '', contact_number: '', assigned_vehicle_id: '' });
+  const [newTrip, setNewTrip] = useState({ route_id: '', vehicle_id: '', driver_id: '' });
   
   // Loading indicators
   const [loadingRoutes, setLoadingRoutes] = useState(true);
@@ -180,12 +189,12 @@ export default function Transport() {
         
         transportApi.allocations.listStudent(sid)
           .then(r2 => setAllocations(r2.data.data ?? []))
-          .catch(() => {});
+          .catch(err => console.warn('Request failed:', err));
       })
       .catch(() => {
         transportApi.allocations.listStudent(user?.user_id ?? '')
           .then(r => setAllocations(r.data.data ?? []))
-          .catch(() => {});
+          .catch(err => console.warn('Request failed:', err));
       })
       .finally(() => setLoadingAllocations(false));
   };
@@ -195,8 +204,27 @@ export default function Transport() {
     setLoadingStudents(true);
     studentsApi.list({ limit: 100 })
       .then(r => setStudents(r.data.data ?? []))
-      .catch(() => {})
+      .catch(err => console.warn('Request failed:', err))
       .finally(() => setLoadingStudents(false));
+  };
+
+  const fetchDrivers = () => {
+    transportApi.drivers.list()
+      .then(r => setDrivers(r.data.data ?? []))
+      .catch(() => showAlert('Failed to load drivers'));
+  };
+
+  const fetchTrips = () => {
+    transportApi.trips.list()
+      .then(r => setTrips(r.data.data ?? []))
+      .catch(() => showAlert('Failed to load trips'));
+  };
+
+  const fetchGpsSimulation = (routeId: string) => {
+    if (!routeId) return;
+    transportApi.routes.getGps(routeId)
+      .then(r => setGpsData(r.data))
+      .catch(() => showAlert('Failed to simulate GPS'));
   };
 
   useEffect(() => {
@@ -205,6 +233,8 @@ export default function Transport() {
       fetchVehicles();
       fetchAllocations();
       fetchStudents();
+      fetchDrivers();
+      fetchTrips();
     } else if (isStudent) {
       fetchStudentAllocations();
       setActiveTab('my-transport');
@@ -301,6 +331,46 @@ export default function Transport() {
       });
   };
 
+  const handleCreateDriver = (e: React.FormEvent) => {
+    e.preventDefault();
+    transportApi.drivers.create({
+      name: newDriver.name,
+      license_number: newDriver.license_number,
+      contact_number: newDriver.contact_number,
+      assigned_vehicle_id: newDriver.assigned_vehicle_id || null
+    })
+      .then(() => {
+        showAlert('Driver registered successfully!', false);
+        setNewDriver({ name: '', license_number: '', contact_number: '', assigned_vehicle_id: '' });
+        fetchDrivers();
+      })
+      .catch(() => showAlert('Failed to register driver'));
+  };
+
+  const handleCreateTrip = (e: React.FormEvent) => {
+    e.preventDefault();
+    transportApi.trips.create({
+      route_id: newTrip.route_id,
+      vehicle_id: newTrip.vehicle_id,
+      driver_id: newTrip.driver_id || null
+    })
+      .then(() => {
+        showAlert('Trip log started successfully (InTransit)!', false);
+        setNewTrip({ route_id: '', vehicle_id: '', driver_id: '' });
+        fetchTrips();
+      })
+      .catch(() => showAlert('Failed to start trip'));
+  };
+
+  const handleCompleteTrip = (tripId: string) => {
+    transportApi.trips.update(tripId, { status: 'Completed' })
+      .then(() => {
+        showAlert('Trip completed successfully!', false);
+        fetchTrips();
+      })
+      .catch(() => showAlert('Failed to complete trip'));
+  };
+
   const handleVacateTransport = (allocationId: string) => {
     if (!can('transport.manage')) return;
 
@@ -360,15 +430,24 @@ export default function Transport() {
           </div>
         )}
 
-        {/* Tab switcher */}
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: '1.5rem', gap: '1rem' }}>
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: '1.5rem', gap: '1rem', flexWrap: 'wrap' }}>
           {isStudent ? (
-            <button 
-              onClick={() => setActiveTab('my-transport')} 
-              style={{ background: 'none', border: 'none', borderBottom: activeTab === 'my-transport' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'my-transport' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
-            >
-              🚌 My Bus Route
-            </button>
+            <>
+              <button 
+                onClick={() => setActiveTab('my-transport')} 
+                style={{ background: 'none', border: 'none', borderBottom: activeTab === 'my-transport' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'my-transport' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
+              >
+                🚌 My Bus Route
+              </button>
+              {hasActiveAllocation && (
+                <button 
+                  onClick={() => setActiveTab('gps')} 
+                  style={{ background: 'none', border: 'none', borderBottom: activeTab === 'gps' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'gps' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
+                >
+                  📍 Live GPS Tracker
+                </button>
+              )}
+            </>
           ) : (
             <>
               <button 
@@ -381,19 +460,31 @@ export default function Transport() {
                 onClick={() => setActiveTab('vehicles')} 
                 style={{ background: 'none', border: 'none', borderBottom: activeTab === 'vehicles' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'vehicles' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
               >
-                🚐 Vehicles registry
+                🚐 Vehicles
+              </button>
+              <button 
+                onClick={() => setActiveTab('drivers')} 
+                style={{ background: 'none', border: 'none', borderBottom: activeTab === 'drivers' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'drivers' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
+              >
+                👤 Drivers
               </button>
               <button 
                 onClick={() => setActiveTab('allocate')} 
                 style={{ background: 'none', border: 'none', borderBottom: activeTab === 'allocate' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'allocate' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
               >
-                ✍️ Allocate Seat Desk
+                ✍️ Allocate Seat
               </button>
               <button 
                 onClick={() => setActiveTab('passengers')} 
                 style={{ background: 'none', border: 'none', borderBottom: activeTab === 'passengers' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'passengers' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
               >
-                👥 Active Passengers ({activePassengersCount})
+                👥 Passengers ({activePassengersCount})
+              </button>
+              <button 
+                onClick={() => setActiveTab('trips')} 
+                style={{ background: 'none', border: 'none', borderBottom: activeTab === 'trips' ? '2px solid var(--accent-primary)' : '2px solid transparent', color: activeTab === 'trips' ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
+              >
+                📅 Trip logs
               </button>
             </>
           )}
@@ -914,6 +1005,114 @@ export default function Transport() {
           </div>
         )}
 
+        {/* Tab 6: Drivers */}
+        {activeTab === 'drivers' && !isStudent && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+            <div className="card" style={{ padding: '1.5rem', border: '1px solid var(--border)' }}>
+              <h3>👤 Drivers Registry</h3>
+              <div style={{ marginTop: '1rem' }}>
+                {drivers.length === 0 ? <p>No drivers registered.</p> : drivers.map((d: any) => (
+                  <div key={d.driver_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem 0', borderBottom: '1px solid var(--border)' }}>
+                    <div>
+                      <strong>{d.name}</strong> (License: {d.license_number})
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Contact: {d.contact_number}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="card" style={{ padding: '1.5rem', border: '1px solid var(--border)' }}>
+              <h3>➕ Add Driver</h3>
+              <form onSubmit={handleCreateDriver} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label">Driver Name</label>
+                  <input type="text" className="form-input" value={newDriver.name} onChange={e => setNewDriver({...newDriver, name: e.target.value})} required />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">License Number</label>
+                  <input type="text" className="form-input" value={newDriver.license_number} onChange={e => setNewDriver({...newDriver, license_number: e.target.value})} required />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Contact Number</label>
+                  <input type="text" className="form-input" value={newDriver.contact_number} onChange={e => setNewDriver({...newDriver, contact_number: e.target.value})} required />
+                </div>
+                <button type="submit" className="btn btn-primary">Add Driver</button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 7: Trip logs */}
+        {activeTab === 'trips' && !isStudent && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+            <div className="card" style={{ padding: '1.5rem', border: '1px solid var(--border)' }}>
+              <h3>📅 active trip logs</h3>
+              <div style={{ marginTop: '1rem' }}>
+                {trips.length === 0 ? <p>No trips started.</p> : trips.map((t: any) => (
+                  <div key={t.log_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem 0', borderBottom: '1px solid var(--border)' }}>
+                    <div>
+                      <strong>Trip status: {t.status}</strong>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Started: {new Date(t.departure_time).toLocaleTimeString()}</div>
+                    </div>
+                    {t.status === 'InTransit' && (
+                      <button className="btn btn-primary btn-sm" onClick={() => handleCompleteTrip(t.log_id)}>Complete Trip</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="card" style={{ padding: '1.5rem', border: '1px solid var(--border)' }}>
+              <h3>🚀 Dispatch Trip</h3>
+              <form onSubmit={handleCreateTrip} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label">Route</label>
+                  <select className="form-input" value={newTrip.route_id} onChange={e => setNewTrip({...newTrip, route_id: e.target.value})} required>
+                    <option value="">-- Choose Route --</option>
+                    {routes.map(r => <option key={r.route_id} value={r.route_id}>{r.route_name}</option>)}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Vehicle</label>
+                  <select className="form-input" value={newTrip.vehicle_id} onChange={e => setNewTrip({...newTrip, vehicle_id: e.target.value})} required>
+                    <option value="">-- Choose Vehicle --</option>
+                    {vehicles.map(v => <option key={v.vehicle_id} value={v.vehicle_id}>{v.vehicle_number}</option>)}
+                  </select>
+                </div>
+                <button type="submit" className="btn btn-primary">Dispatch</button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 8: Live GPS Tracker */}
+        {activeTab === 'gps' && (
+          <div className="card" style={{ padding: '2rem', border: '1px solid var(--border)', maxWidth: '600px', margin: '0 auto', textAlign: 'center' }}>
+            <h3>📍 Live GPS Simulation</h3>
+            <p style={{ color: 'var(--text-secondary)' }}>Select a route to track the vehicle live location coordinates.</p>
+            <div style={{ marginTop: '1.5rem' }}>
+              <select className="form-input" onChange={e => fetchGpsSimulation(e.target.value)} style={{ maxWidth: '300px', margin: '0 auto' }}>
+                <option value="">-- Choose active route --</option>
+                {allocations.map(a => <option key={a.route_id} value={a.route_id}>{a.route_name}</option>)}
+              </select>
+            </div>
+
+            {gpsData && (
+              <div style={{ marginTop: '2rem', background: 'rgba(99,102,241,0.05)', padding: '1.5rem', borderRadius: '8px', border: '1px solid rgba(99,102,241,0.2)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', textAlign: 'left' }}>
+                  <div>Latitude: <strong>{gpsData.latitude?.toFixed(6)}</strong></div>
+                  <div>Longitude: <strong>{gpsData.longitude?.toFixed(6)}</strong></div>
+                  <div>Speed: <strong>{gpsData.speed_kmh} km/h</strong></div>
+                  <div>Heading: <strong>{gpsData.heading}° (South)</strong></div>
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '1rem' }}>
+                  Last Updated: {new Date(gpsData.last_updated).toLocaleTimeString()} (Active Feed)
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </>
   );
