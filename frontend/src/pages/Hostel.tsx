@@ -115,16 +115,18 @@ export default function Hostel() {
   };
 
   const fetchStudentAllocations = () => {
-    if (!isStudent || !user?.user_id) return;
+    if (!isStudent) return;
     setLoadingAllocations(true);
     
-    studentsApi.list()
+    // Use getMyProfile to reliably get own student_id
+    studentsApi.getMyProfile()
       .then(r => {
-        const studentList = r.data.data ?? [];
-        const ownStudent = studentList.find((s: Student) => s.person?.email === user?.username);
-        const sid = ownStudent?.student_id || user?.user_id;
-        
-        hostelApi.allocations.listStudent(sid)
+        const studentId = r.data?.data?.student_id;
+        if (!studentId) {
+          setLoadingAllocations(false);
+          return;
+        }
+        return hostelApi.allocations.listStudent(studentId)
           .then(r2 => setAllocations(r2.data.data ?? []))
           .catch(err => console.warn('Request failed:', err));
       })
@@ -640,7 +642,7 @@ export default function Hostel() {
                       </td>
                       <td style={{ padding: '0.75rem' }}>
                         <div>{alloc.student_name}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{alloc.student_id}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{alloc.enrollment_number || '—'}</div>
                       </td>
                       <td style={{ padding: '0.75rem' }}>{alloc.start_date}</td>
                       <td style={{ padding: '0.75rem' }}>{alloc.end_date || 'Ongoing stay'}</td>

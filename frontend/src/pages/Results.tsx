@@ -58,7 +58,7 @@ interface RevaluationRequestRow {
 
 export default function Results() {
   const { can, isStudent, user, isAdmin } = usePermissions();
-  const [activeTab, setActiveTab] = useState<'results' | 'revaluations'>('results');
+  const [activeTab, setActiveTab] = useState<'results' | 'class-results' | 'revaluations'>('results');
   const [students, setStudents] = useState<StudentItem[]>([]);
   const [selectedStudentId, setSelectedStudentId] = useState('');
   const [currentStudent, setCurrentStudent] = useState<any>(null);
@@ -274,7 +274,17 @@ export default function Results() {
                 borderBottom: activeTab === 'results' ? '2px solid var(--accent-primary)' : 'none'
               }}
             >
-              🏆 Semester Results
+              👤 Per-Student Results
+            </button>
+            <button
+              onClick={() => setActiveTab('class-results')}
+              style={{
+                background: 'none', border: 'none', padding: '0.75rem 1rem', cursor: 'pointer',
+                fontWeight: 600, color: activeTab === 'class-results' ? 'var(--accent-primary)' : 'var(--text-muted)',
+                borderBottom: activeTab === 'class-results' ? '2px solid var(--accent-primary)' : 'none'
+              }}
+            >
+              🏫 Class / Department Results
             </button>
             <button
               onClick={() => setActiveTab('revaluations')}
@@ -291,6 +301,11 @@ export default function Results() {
 
         {message && <div className="card" style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', color: 'var(--accent-success)', padding: '1rem', marginBottom: '1.5rem', borderRadius: 8 }}>{message}</div>}
         {error && <div className="login-error" style={{ marginBottom: '1.5rem' }}>{error}</div>}
+
+        {/* Class / Department Results view — admin only */}
+        {activeTab === 'class-results' && isAdmin && (
+          <ClassResultsView students={students} />
+        )}
 
         {activeTab === 'results' ? (
           <>
@@ -596,5 +611,152 @@ export default function Results() {
         )}
       </div>
     </>
+  );
+}
+
+/* ─── Class / Department Results View ────────────────────────────────────────── */
+function ClassResultsView({ students }: { students: StudentItem[] }) {
+  const [semFilter, setSemFilter] = useState('');
+  const [sortBy, setSortBy] = useState<'cgpa' | 'name' | 'enrollment'>('cgpa');
+  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
+  const [allResults, setAllResults] = useState<Map<string, any>>(new Map());
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (students.length === 0) return;
+    setLoading(true);
+    // Fetch result summaries for all students in parallel (batched)
+    const fetchBatch = async () => {
+      const map = new Map<string, any>();
+      const chunks = [];
+      for (let i = 0; i < students.length; i += 10) {
+        chunks.push(students.slice(i, i + 10));
+      }
+      for (const chunk of chunks) {
+        await Promise.all(chunk.map(async s => {
+          try {
+            const r = await examinationApi.results.get(s.student_id);
+            const results: any[] = r.data.data ?? [];
+            map.set(s.student_id, results);
+          } catch {
+            map.set(s.student_id, []);
+          }
+        }));
+      }
+      setAllResults(map);
+      setLoading(false);
+    };
+    fetchBatch();
+  }, [students]);
+
+  const semesters = Array.from(new Set(
+    Array.from(allResults.values()).flat().map((r: any) => r.semester)
+  )).sort();
+
+  const rows = students.map(s => {
+    const results: any[] = allResults.get(s.student_id) ?? [];
+    const filtered = semFilter ? results.filter(r => String(r.semester) === semFilter) : results;
+    const latest = filtered.sort((a, b) => b.semester - a.semester)[0];
+    const latestCgpa = latest?.cgpa ?? s.cgpa ?? null;
+    const latestSgpa = latest?.sgpa ?? null;
+    const backlogs = latest?.backlogs_count ?? 0;
+    const status = latest?.status ?? '—';
+    return { s, latestCgpa, latestSgpa, backlogs, status, semester: latest?.semester };
+  });
+
+  const sorted = [...rows].sort((a, b) => {
+    if (sortBy === 'cgpa') {
+      const va = parseFloat(a.latestCgpa ?? '0');
+      const vb = parseFloat(b.latestCgpa ?? '0');
+      return sortDir === 'desc' ? vb - va : va - vb;
+    }
+    if (sortBy === 'name') {
+      const na = a.s.person.first_name; const nb = b.s.person.first_name;
+      return sortDir === 'asc' ? na.localeCompare(nb) : nb.localeCompare(na);
+    }
+    const ea = a.s.enrollment_number ?? ''; const eb = b.s.enrollment_number ?? '';
+    return sortDir === 'asc' ? ea.localeCompare(eb) : eb.localeCompare(ea);
+  });
+
+  const toggleSort = (col: 'cgpa' | 'name' | 'enrollment') => {
+    if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortBy(col); setSortDir('desc'); }
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0 }}>🏫 Department Results — {students.length} Students</h2>
+        <select className="form-select" style={{ minWidth: 160 }} value={semFilter} onChange={e => setSemFilter(e.target.value)}>
+          <option value="">All Semesters</option>
+          {semesters.map(sem => <option key={sem} value={String(sem)}>Semester {sem}</option>)}
+        </select>
+      </div>
+      {loading ? (
+        <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+          Loading results for all {students.length} students…
+        </div>
+      ) : (
+        <div className="card">
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ cursor: 'pointer' }} onClick={() => toggleSort('enrollment')}>
+                    Enrl. No. {sortBy === 'enrollment' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                  </th>
+                  <th style={{ cursor: 'pointer' }} onClick={() => toggleSort('name')}>
+                    Student {sortBy === 'name' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                  </th>
+                  <th>Sem</th>
+                  <th>SGPA</th>
+                  <th style={{ cursor: 'pointer' }} onClick={() => toggleSort('cgpa')}>
+                    CGPA {sortBy === 'cgpa' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                  </th>
+                  <th>Backlogs</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map(({ s, latestCgpa, latestSgpa, backlogs, status, semester }) => {
+                  const cgpaNum = parseFloat(latestCgpa ?? '0');
+                  return (
+                    <tr key={s.student_id}>
+                      <td><code style={{ fontSize: '0.85rem' }}>{s.enrollment_number ?? '—'}</code></td>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{s.person.first_name} {s.person.last_name ?? ''}</div>
+                      </td>
+                      <td>{semester ? `Sem ${semester}` : '—'}</td>
+                      <td>
+                        {latestSgpa ? (
+                          <strong style={{ color: parseFloat(latestSgpa) >= 7.5 ? 'var(--color-success)' : parseFloat(latestSgpa) >= 5.0 ? 'var(--accent-warning)' : '#ef4444' }}>
+                            {parseFloat(latestSgpa).toFixed(2)}
+                          </strong>
+                        ) : '—'}
+                      </td>
+                      <td>
+                        {latestCgpa ? (
+                          <strong style={{ color: cgpaNum >= 7.5 ? 'var(--color-success)' : cgpaNum >= 5.0 ? 'var(--accent-warning)' : '#ef4444' }}>
+                            {cgpaNum.toFixed(2)}
+                          </strong>
+                        ) : '—'}
+                      </td>
+                      <td>
+                        <span className={`badge ${backlogs > 0 ? 'badge-danger' : 'badge-success'}`}>{backlogs}</span>
+                      </td>
+                      <td>
+                        <span className={`badge ${status === 'Pass' ? 'badge-success' : status === 'Fail' ? 'badge-danger' : 'badge-muted'}`}>
+                          {status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

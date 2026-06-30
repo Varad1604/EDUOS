@@ -155,6 +155,8 @@ pub async fn list_students(
 
     let filter_branch = if claims.branch_id.is_some() { claims.branch_id } else { query.branch_id };
 
+    let is_faculty = claims.role_name == "Faculty";
+
     let total: i64 = sqlx::query_scalar(
         r#"
         SELECT COUNT(*)
@@ -167,6 +169,14 @@ pub async fn list_students(
           AND ($4::uuid IS NULL OR sp.branch_id = $4)
           AND ($5::int IS NULL OR sp.current_academic_year = $5)
           AND ($6::text IS NULL OR p.first_name ILIKE $6 OR p.last_name ILIKE $6 OR sp.enrollment_number ILIKE $6)
+          AND (NOT $7::boolean OR sp.student_id IN (
+              SELECT ce.student_id
+              FROM class_enrollments ce
+              JOIN course_allocations ca ON ce.class_id = ca.class_id
+              JOIN faculty f ON ca.faculty_id = f.faculty_id
+              JOIN users u ON f.person_id = u.person_id
+              WHERE u.user_id = $8
+          ))
         "#,
     )
     .bind(claims.institution_id)
@@ -175,6 +185,8 @@ pub async fn list_students(
     .bind(filter_branch)
     .bind(query.academic_year)
     .bind(search_pattern.as_deref())
+    .bind(is_faculty)
+    .bind(claims.sub)
     .fetch_one(db)
     .await
     .map_err(AppError::Database)?;
@@ -195,8 +207,16 @@ pub async fn list_students(
           AND ($4::uuid IS NULL OR sp.branch_id = $4)
           AND ($5::int IS NULL OR sp.current_academic_year = $5)
           AND ($6::text IS NULL OR p.first_name ILIKE $6 OR p.last_name ILIKE $6 OR sp.enrollment_number ILIKE $6)
+          AND (NOT $7::boolean OR sp.student_id IN (
+              SELECT ce.student_id
+              FROM class_enrollments ce
+              JOIN course_allocations ca ON ce.class_id = ca.class_id
+              JOIN faculty f ON ca.faculty_id = f.faculty_id
+              JOIN users u ON f.person_id = u.person_id
+              WHERE u.user_id = $8
+          ))
         ORDER BY sp.created_at DESC
-        LIMIT $7 OFFSET $8
+        LIMIT $9 OFFSET $10
         "#,
     )
     .bind(claims.institution_id)
@@ -205,6 +225,8 @@ pub async fn list_students(
     .bind(filter_branch)
     .bind(query.academic_year)
     .bind(search_pattern.as_deref())
+    .bind(is_faculty)
+    .bind(claims.sub)
     .bind(limit)
     .bind(offset)
     .fetch_all(db)

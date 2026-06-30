@@ -114,7 +114,7 @@ export default function App() {
         
         <Route path="/leave" element={
           <RequireAuth>
-            <RequireRole allowedRoles={['Principal', 'Registrar', 'Faculty', 'Student']}>
+            <RequireRole allowedRoles={['Principal', 'Registrar', 'Faculty']}>
               <ProtectedLayout><LeaveManagement /></ProtectedLayout>
             </RequireRole>
           </RequireAuth>
@@ -122,7 +122,7 @@ export default function App() {
         
         <Route path="/exams" element={
           <RequireAuth>
-            <RequireRole allowedRoles={['Principal', 'Registrar', 'Faculty', 'Student']}>
+            <RequireRole allowedRoles={['Principal', 'Registrar', 'Student']}>
               <ProtectedLayout><Exams /></ProtectedLayout>
             </RequireRole>
           </RequireAuth>
@@ -186,7 +186,7 @@ export default function App() {
         
         <Route path="/library" element={
           <RequireAuth>
-            <RequireRole allowedRoles={['Principal', 'Registrar', 'Faculty', 'Student']}>
+            <RequireRole allowedRoles={['Principal', 'Registrar', 'Student']}>
               <ProtectedLayout><Library /></ProtectedLayout>
             </RequireRole>
           </RequireAuth>
@@ -194,7 +194,7 @@ export default function App() {
 
         <Route path="/hostel" element={
           <RequireAuth>
-            <RequireRole allowedRoles={['Principal', 'Registrar', 'Faculty', 'Student']}>
+            <RequireRole allowedRoles={['Principal', 'Registrar', 'Student']}>
               <ProtectedLayout><Hostel /></ProtectedLayout>
             </RequireRole>
           </RequireAuth>
@@ -202,7 +202,7 @@ export default function App() {
 
         <Route path="/transport" element={
           <RequireAuth>
-            <RequireRole allowedRoles={['Principal', 'Registrar', 'Faculty', 'Student']}>
+            <RequireRole allowedRoles={['Principal', 'Registrar', 'Student']}>
               <ProtectedLayout><Transport /></ProtectedLayout>
             </RequireRole>
           </RequireAuth>
@@ -218,7 +218,7 @@ export default function App() {
 
         <Route path="/medical" element={
           <RequireAuth>
-            <RequireRole allowedRoles={['Principal', 'Registrar', 'Faculty', 'Student']}>
+            <RequireRole allowedRoles={['Principal', 'Registrar', 'Student']}>
               <ProtectedLayout><Medical /></ProtectedLayout>
             </RequireRole>
           </RequireAuth>

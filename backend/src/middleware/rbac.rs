@@ -79,17 +79,28 @@ pub async fn rbac_middleware(
         ("POST", "/api/v1/fee-allocations") => ("fees", "create"),
         ("GET", p) if p.starts_with("/api/v1/fee-allocations/") => ("fees", "read"),
         ("POST", "/api/v1/payments") => ("fees", "create"),
+        ("POST", p) if p.starts_with("/api/v1/payments/") && p.ends_with("/verify") => ("fees", "create"),
         ("GET", p) if p.starts_with("/api/v1/payments/") => ("fees", "read"),
         ("POST", "/api/v1/scholarships") => ("fees", "create"),
         ("GET", "/api/v1/scholarships") => ("fees", "read"),
+        ("POST", p) if p.starts_with("/api/v1/scholarships/") && p.ends_with("/allocate") => ("fees", "create"),
+        ("POST", "/api/v1/late-fees/policy") => ("fees", "create"),
+        ("POST", "/api/v1/late-fees/apply") => ("fees", "create"),
+        ("POST", "/api/v1/installments") => ("fees", "create"),
+        ("POST", "/api/v1/waivers") => ("fees", "create"),
+        ("PATCH", p) if p.starts_with("/api/v1/waivers/") && p.ends_with("/approve") => ("fees", "approve"),
         ("POST", "/api/v1/accounts") => ("accounts", "create"),
         ("GET", "/api/v1/accounts") => ("accounts", "read"),
         ("POST", "/api/v1/journal-entries") => ("accounts", "create"),
         ("GET", "/api/v1/journal-entries") => ("accounts", "read"),
         ("PATCH", p) if p.starts_with("/api/v1/journal-entries/") && p.ends_with("/approve") => ("accounts", "approve"),
+        ("POST", "/api/v1/fiscal-years") => ("accounts", "create"),
+        ("PATCH", p) if p.starts_with("/api/v1/fiscal-years/") && p.ends_with("/lock") => ("accounts", "approve"),
+        ("POST", "/api/v1/bank-statements") => ("accounts", "create"),
         ("GET", "/api/v1/reports/balance-sheet") => ("reports", "read"),
         ("GET", "/api/v1/reports/income-statement") => ("reports", "read"),
         ("GET", "/api/v1/reports/audit-logs") => ("reports", "read"),
+        ("GET", "/api/v1/reports/fee-collection-trend") => ("reports", "read"),
         // Library
         ("POST", "/api/v1/library/books") => ("library", "manage"),
         ("GET", "/api/v1/library/books") => ("library", "view"),
@@ -252,12 +263,9 @@ pub async fn seed_default_permissions(
         ("Faculty", vec![
             ("students", "read"),
             ("courses", "read"),
-            ("attendance", "read"), ("attendance", "create"),
-            ("exams", "read"), ("exams", "create"),
+            ("attendance", "read"), ("attendance", "create"), ("attendance", "approve"),
             ("marks", "read"), ("marks", "create"),
-            ("reports", "read"),
-            ("library", "view"),
-            ("medical", "view"),
+            // Faculty does NOT get: exams, library, medical, finance, hostel, transport
         ]),
         ("Student", vec![
             ("students", "read"),
@@ -265,12 +273,12 @@ pub async fn seed_default_permissions(
             ("attendance", "read"),
             ("exams", "read"),
             ("marks", "read"),
-            ("fees", "read"), ("fees", "create"), // Pay fee creates fee payments
+            ("fees", "read"), ("fees", "create"), // Student can pay their own fees
             ("library", "view"),
-            ("hostel", "view"),
-            ("transport", "view"),
+            ("hostel", "view"),   // All students see Hostel page (content gated by active booking)
+            ("transport", "view"), // All students see Transport page (content gated by active booking)
             ("placement", "view"), ("placement", "apply"),
-            ("medical", "view"),
+            ("medical", "view"),   // Student sees only own visits (filtered in frontend)
         ]),
     ];
 

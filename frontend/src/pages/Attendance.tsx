@@ -412,6 +412,8 @@ function MarkAttendance() {
 function DefaulterAlerts() {
   const [defaulters, setDefaulters] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [semFilter, setSemFilter] = useState('');
+  const [deptFilter, setDeptFilter] = useState('');
 
   useEffect(() => {
     academicsApi.attendance.defaulters()
@@ -422,40 +424,101 @@ function DefaulterAlerts() {
 
   if (loading) return <div style={{ padding: '2rem', textAlign: 'center' }}>Loading defaulters...</div>;
 
+  const filtered = defaulters.filter(d =>
+    (!semFilter || String(d.semester) === semFilter) &&
+    (!deptFilter || (d.branch_name ?? d.department_name ?? '').toLowerCase().includes(deptFilter.toLowerCase()))
+  );
+
+  // Group by semester then by department/branch
+  const semesters = Array.from(new Set(defaulters.map(d => d.semester))).sort();
+  const departments = Array.from(new Set(defaulters.map(d => d.branch_name ?? d.department_name ?? 'General'))).sort();
+
+  // Group filtered defaulters by semester
+  const bySemester: Record<string, any[]> = {};
+  filtered.forEach(d => {
+    const sem = String(d.semester ?? 'Unknown');
+    if (!bySemester[sem]) bySemester[sem] = [];
+    bySemester[sem].push(d);
+  });
+
+  // Within each semester, further group by department
+  const renderGroup = (semLabel: string, students: any[]) => {
+    const byDept: Record<string, any[]> = {};
+    students.forEach(d => {
+      const dept = d.branch_name ?? d.department_name ?? 'General';
+      if (!byDept[dept]) byDept[dept] = [];
+      byDept[dept].push(d);
+    });
+    return (
+      <div key={semLabel} style={{ marginBottom: '2rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+          <h3 style={{ margin: 0 }}>Semester {semLabel}</h3>
+          <span className="badge badge-danger">{students.length} defaulter{students.length !== 1 ? 's' : ''}</span>
+        </div>
+        {Object.entries(byDept).map(([dept, dStudents]) => (
+          <div key={dept} style={{ marginBottom: '1.25rem' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '0.5rem', padding: '4px 8px', background: 'var(--color-surface)', borderRadius: 6, display: 'inline-block' }}>
+              🏛️ {dept} ({dStudents.length})
+            </div>
+            <div className="table-wrap" style={{ marginTop: '0.5rem' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Student</th><th>Enrollment No.</th><th>Course</th><th>Attendance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dStudents.map((d, i) => (
+                    <tr key={i}>
+                      <td><div style={{ fontWeight: 600 }}>{d.first_name} {d.last_name || ''}</div></td>
+                      <td><code style={{ fontSize: '0.85rem' }}>{d.enrollment_number || '—'}</code></td>
+                      <td style={{ fontSize: '0.85rem' }}>{d.course_code} — {d.course_name}</td>
+                      <td>
+                        <span className="badge badge-danger">{d.percentage.toFixed(1)}%</span>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>{d.present_count}/{d.total_classes} classes</div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className="card">
       <div className="card-header">
-        <h3>Defaulter Alerts (&lt; 75% Attendance)</h3>
-        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>Students who are ineligible for exams due to attendance shortage.</p>
+        <div>
+          <h3 style={{ marginBottom: '0.25rem' }}>Defaulter Alerts (&lt; 75% Attendance)</h3>
+          <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+            Grouped by Semester and Department — {filtered.length} students below threshold.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+          <select className="form-select" style={{ minWidth: 140 }} value={semFilter} onChange={e => setSemFilter(e.target.value)}>
+            <option value="">All Semesters</option>
+            {semesters.map(s => <option key={s} value={String(s)}>Semester {s}</option>)}
+          </select>
+          <select className="form-select" style={{ minWidth: 180 }} value={deptFilter} onChange={e => setDeptFilter(e.target.value)}>
+            <option value="">All Departments</option>
+            {departments.map(d => <option key={d}>{d}</option>)}
+          </select>
+        </div>
       </div>
-      {defaulters.length === 0 ? (
+      {filtered.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">✅</div>
-          <h3>All Good!</h3>
+          <h3>No Defaulters</h3>
           <p>No students are currently falling below the 75% attendance threshold.</p>
         </div>
       ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Student</th><th>Enrollment No.</th><th>Course</th><th>Attendance</th></tr>
-            </thead>
-            <tbody>
-              {defaulters.map((d, i) => (
-                <tr key={i}>
-                  <td>
-                    <div style={{ fontWeight: 600 }}>{d.first_name} {d.last_name || ''}</div>
-                  </td>
-                  <td>{d.enrollment_number || '—'}</td>
-                  <td>{d.course_code} - {d.course_name}</td>
-                  <td>
-                    <span className="badge badge-danger">{d.percentage.toFixed(1)}%</span>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{d.present_count} / {d.total_classes} classes</div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div style={{ padding: '1.25rem' }}>
+          {Object.entries(bySemester)
+            .sort(([a], [b]) => Number(a) - Number(b))
+            .map(([sem, students]) => renderGroup(sem, students))}
         </div>
       )}
     </div>

@@ -45,7 +45,7 @@ const fmt = (d: string) => new Date(d).toLocaleDateString('en-IN', { day: '2-dig
 
 /* ─── Main Page ──────────────────────────────────────────────────────────────── */
 export default function Medical() {
-  const { can } = usePermissions();
+  const { can, isStudent } = usePermissions();
   const canManage = can('medical.manage');
 
   const [tab, setTab] = useState<Tab>('overview');
@@ -54,6 +54,7 @@ export default function Medical() {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [sickLeaves, setSickLeaves] = useState<SickLeave[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
+  const [myStudentId, setMyStudentId] = useState<string | null>(null); // for student self-filtering
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
@@ -88,22 +89,43 @@ export default function Medical() {
     setTimeout(() => setToast(''), 3500);
   };
 
+  // If student: fetch own student_id for filtering
+  useEffect(() => {
+    if (isStudent) {
+      studentsApi.getMyProfile()
+        .then(r => setMyStudentId(r.data?.data?.student_id ?? null))
+        .catch(() => {});
+    }
+  }, [isStudent]);
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
       const [st, v, inv, sl] = await Promise.all([
-        medicalApi.stats(),
+        canManage ? medicalApi.stats() : Promise.resolve(null),
         medicalApi.listVisits(),
-        medicalApi.listInventory(),
+        canManage ? medicalApi.listInventory() : Promise.resolve([]),
         medicalApi.listSickLeaves(),
       ]);
       setStats(st);
-      setVisits(Array.isArray(v) ? v : []);
+      // Students only see their OWN visits and sick leaves
+      const allVisits: MedVisit[] = Array.isArray(v) ? v : [];
+      const allLeaves: SickLeave[] = Array.isArray(sl) ? sl : [];
+      if (isStudent && myStudentId) {
+        setVisits(allVisits.filter(vis => vis.student_id === myStudentId));
+        setSickLeaves(allLeaves.filter(l => l.student_id === myStudentId));
+      } else if (isStudent) {
+        // still loading student_id — show nothing until we know
+        setVisits([]);
+        setSickLeaves([]);
+      } else {
+        setVisits(allVisits);
+        setSickLeaves(allLeaves);
+      }
       setInventory(Array.isArray(inv) ? inv : []);
-      setSickLeaves(Array.isArray(sl) ? sl : []);
     } catch { /* non-fatal */ }
     finally { setLoading(false); }
-  }, []);
+  }, [canManage, isStudent, myStudentId]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -117,19 +139,63 @@ export default function Medical() {
 
   /* ── Overview ─────────────────────────────────────────────────────────────── */
   function OverviewTab() {
-    const cards = [
-      { label: 'Visits Today',     value: stats?.total_visits_today  ?? 0, color: '#1d4ed8' },
-      { label: 'This Month',        value: stats?.total_visits_month  ?? 0, color: '#1e40af' },
-      { label: 'Open Cases',         value: stats?.open_visits         ?? 0, color: '#b45309' },
-      { label: 'Inventory Items',   value: stats?.total_inventory_items ?? 0, color: '#15803d' },
-      { label: 'Low Stock',          value: stats?.low_stock_items     ?? 0, color: '#b91c1c' },
-      { label: 'Sick Leaves',        value: stats?.sick_leaves_issued  ?? 0, color: '#1e40af' },
+    // Admin/staff cards
+    const adminCards = [
+      { label: 'Visits Today',    value: stats?.total_visits_today    ?? 0, color: '#1d4ed8' },
+      { label: 'This Month',      value: stats?.total_visits_month    ?? 0, color: '#1e40af' },
+      { label: 'Open Cases',      value: stats?.open_visits           ?? 0, color: '#b45309' },
+      { label: 'Inventory Items', value: stats?.total_inventory_items ?? 0, color: '#15803d' },
+      { label: 'Low Stock',       value: stats?.low_stock_items       ?? 0, color: '#b91c1c' },
+      { label: 'Sick Leaves',     value: stats?.sick_leaves_issued    ?? 0, color: '#1e40af' },
     ];
 
+    if (isStudent) {
+      // Student personal summary
+      const lastVisit = visits.length > 0 ? visits[0] : null;
+      const personalCards = [
+        { label: 'Total Visits', value: visits.length, color: '#1d4ed8' },
+        { label: 'Sick Leave Days', value: sickLeaves.reduce((s, l) => s + l.days, 0), color: '#7c3aed' },
+        { label: 'Open Cases', value: visits.filter(v => v.status === 'Open').length, color: '#b45309' },
+      ];
+      return (
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(175px, 1fr))', gap: 16, marginBottom: 32 }}>
+            {personalCards.map(c => (
+              <div key={c.label} style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 6, padding: '20px 24px' }}>
+                <div style={{ fontSize: '2rem', fontWeight: 800, color: c.color }}>{c.value}</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{c.label}</div>
+              </div>
+            ))}
+          </div>
+          {/* Recent visits - personal only */}
+          <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 16, padding: 24 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ margin: 0, color: 'var(--text)', fontSize: '1rem' }}>My Recent Visits</h3>
+              <button className="btn btn-secondary btn-sm" onClick={() => setTab('visits')}>View All</button>
+            </div>
+            {lastVisit ? (
+              visits.slice(0, 5).map(v => (
+                <div key={v.visit_id} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text)' }}>{v.chief_complaint}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{fmt(v.visit_date)} · Dr. {v.doctor_name}</div>
+                  </div>
+                  {pill(v.status)}
+                </div>
+              ))
+            ) : (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No medical visits on record.</p>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // Admin / staff overview
     return (
       <div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(175px, 1fr))', gap: 16, marginBottom: 32 }}>
-          {cards.map(c => (
+          {adminCards.map(c => (
             <div key={c.label} style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 6, padding: '20px 24px', position: 'relative', overflow: 'hidden' }}>
               <div style={{ fontSize: '2rem', fontWeight: 800, color: c.color }}>{c.value}</div>
               <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{c.label}</div>
@@ -561,12 +627,18 @@ export default function Medical() {
     );
   }
 
-  const TABS: { id: Tab; label: string; icon: string }[] = [
-    { id: 'overview',    label: 'Overview',    icon: '📊' },
-    { id: 'visits',      label: 'OPD Visits',  icon: '🏥' },
-    { id: 'inventory',   label: 'Inventory',   icon: '💊' },
-    { id: 'sick-leaves', label: 'Sick Leaves', icon: '📄' },
-  ];
+  // Students only see Overview and Visit History; admins see all tabs
+  const TABS: { id: Tab; label: string; icon: string }[] = isStudent
+    ? [
+        { id: 'overview', label: 'Overview',       icon: '📊' },
+        { id: 'visits',   label: 'My Visit History', icon: '🏥' },
+      ]
+    : [
+        { id: 'overview',    label: 'Overview',    icon: '📊' },
+        { id: 'visits',      label: 'OPD Visits',  icon: '🏥' },
+        { id: 'inventory',   label: 'Inventory',   icon: '💊' },
+        { id: 'sick-leaves', label: 'Sick Leaves', icon: '📄' },
+      ];
 
   return (
     <>

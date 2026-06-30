@@ -37,7 +37,7 @@ export default function Accounts() {
   ]);
 
   // Block non-finance roles entirely
-  if (!can('accounts.viewAll')) {
+  if (!can('accounts.read')) {
     return (
       <>
         <Header title="Accounts" subtitle="Access denied" />
