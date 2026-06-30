@@ -22,7 +22,8 @@ interface Course {
 }
 
 export default function Quizzes() {
-  const { isStudent, isFaculty, isAdmin } = usePermissions();
+  const { isStudent, isFaculty, isAdmin, isRegistrar } = usePermissions();
+  const canCreate = isFaculty || (isAdmin && !isRegistrar); // Registrar is read-only
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,10 +97,13 @@ export default function Quizzes() {
             <h1>Quiz Schedules</h1>
             <p>{isStudent ? 'Your upcoming academic tests and quizzes' : 'Schedule quizzes and manage assessments'}</p>
           </div>
-          {(isFaculty || isAdmin) && (
+          {canCreate && (
             <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
               + Schedule Quiz
             </button>
+          )}
+          {isRegistrar && (
+            <span className="badge badge-muted" style={{ fontSize: '0.8rem', padding: '6px 12px' }}>👁 Audit View</span>
           )}
         </div>
 

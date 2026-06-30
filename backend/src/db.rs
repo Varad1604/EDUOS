@@ -188,10 +188,59 @@ async fn seed_database(pool: &PgPool) -> Result<()> {
     .bind(uuid::Uuid::new_v4())
     .bind(p_faculty_id)
     .bind(inst_id)
-    .bind(faculty_pass)
+    .bind(&faculty_pass)
     .bind(faculty_role_id)
     .execute(pool)
     .await?;
+
+    let extra_faculties = vec![
+        ("Sunita", "Rao", "FAC002", "Professor", "sunita", "9696969697", "sunita.rao@eduos.org"),
+        ("Vikas", "Gupta", "FAC003", "Associate Professor", "vikas", "9696969698", "vikas.gupta@eduos.org"),
+        ("Anjali", "Mehta", "FAC004", "Assistant Professor", "anjali", "9696969699", "anjali.mehta@eduos.org"),
+        ("Ramesh", "Kumar", "FAC005", "Professor", "ramesh", "9696969690", "ramesh.kumar@eduos.org"),
+    ];
+
+    for (first_name, last_name, code, desig, username, phone, email) in extra_faculties {
+        let p_id = uuid::Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO persons (person_id, institution_id, first_name, last_name, phone, email)
+             VALUES ($1, $2, $3, $4, $5, $6)"
+        )
+        .bind(p_id)
+        .bind(inst_id)
+        .bind(first_name)
+        .bind(last_name)
+        .bind(phone)
+        .bind(email)
+        .execute(pool)
+        .await?;
+
+        let fac_id = uuid::Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO faculty (faculty_id, person_id, institution_id, employee_code, designation)
+             VALUES ($1, $2, $3, $4, $5)"
+        )
+        .bind(fac_id)
+        .bind(p_id)
+        .bind(inst_id)
+        .bind(code)
+        .bind(desig)
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO users (user_id, person_id, institution_id, username, password_hash, role_id)
+             VALUES ($1, $2, $3, $4, $5, $6)"
+        )
+        .bind(uuid::Uuid::new_v4())
+        .bind(p_id)
+        .bind(inst_id)
+        .bind(username)
+        .bind(&faculty_pass)
+        .bind(faculty_role_id)
+        .execute(pool)
+        .await?;
+    }
 
     // 4e. Student user
     let p_student_id = uuid::Uuid::new_v4();

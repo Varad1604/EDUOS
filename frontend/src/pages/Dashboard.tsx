@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import Header from '../components/Header';
 import { usePermissions } from '../hooks/usePermissions';
-import { studentsApi, academicsApi, examinationApi, financeApi } from '../api';
+import { studentsApi, academicsApi, examinationApi, financeApi, hostelApi, transportApi } from '../api';
 
 // Professional SVG Icons
 function DashboardIcon({ name, color }: { name: string; color?: string }) {
@@ -514,6 +514,8 @@ function StudentDashboard() {
   const [feeSummary, setFeeSummary] = useState<any>(null);
   const [exams, setExams] = useState<any[]>([]);
   const [attendancePct, setAttendancePct] = useState<string>('—');
+  const [hostelAlloc, setHostelAlloc] = useState<any>(null);
+  const [transportAlloc, setTransportAlloc] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -524,6 +526,22 @@ function StudentDashboard() {
           .then(res => setResults(res.data.data ?? [])).catch(err => console.warn('Request failed:', err));
         financeApi.allocations.summary(me.student_id)
           .then(res => setFeeSummary(res.data.data)).catch(err => console.warn('Request failed:', err));
+
+        // Fetch Hostel Stay allotment
+        hostelApi.allocations.listStudent(me.student_id)
+          .then(res => {
+            const list = res.data.data ?? [];
+            const active = list.find((a: any) => a.status === 'Active');
+            setHostelAlloc(active ?? null);
+          }).catch(err => console.warn('Hostel alloc fetch failed', err));
+
+        // Fetch Transport Route allotment
+        transportApi.allocations.listStudent(me.student_id)
+          .then(res => {
+            const list = res.data.data ?? [];
+            const active = list.find((a: any) => a.status === 'Active');
+            setTransportAlloc(active ?? null);
+          }).catch(err => console.warn('Transport alloc fetch failed', err));
 
         academicsApi.courses.list().then(cRes => {
           const list = cRes.data.data ?? [];
@@ -631,6 +649,62 @@ function StudentDashboard() {
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+      {/* Hostel stay & Transport details */}
+      <div className="grid-2" style={{ marginTop: '1.5rem' }}>
+        <div className="card">
+          <div className="card-header">
+            <h3>🏢 Hostel Stay Details</h3>
+            <a href="/hostel" className="btn btn-secondary btn-sm">Manage Stay</a>
+          </div>
+          {hostelAlloc ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--color-border)' }}>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>Block / Room:</span>
+                <strong style={{ color: 'var(--color-text-primary)', fontSize: '0.95rem' }}>{hostelAlloc.hostel_name} — Room {hostelAlloc.room_number}</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--color-border)' }}>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>Room Type:</span>
+                <span className="badge badge-info">{hostelAlloc.room_type}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0' }}>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>Mess Plan:</span>
+                <strong style={{ color: 'var(--color-primary)', fontSize: '0.95rem' }}>{hostelAlloc.mess_plan}</strong>
+              </div>
+            </div>
+          ) : (
+            <div style={{ padding: '2rem 1.5rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.88rem' }}>
+              No active hostel stay allocation.
+            </div>
+          )}
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <h3>🚌 Transport Bus Details</h3>
+            <a href="/transport" className="btn btn-secondary btn-sm">Manage Route</a>
+          </div>
+          {transportAlloc ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--color-border)' }}>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>Route:</span>
+                <strong style={{ color: 'var(--color-text-primary)', fontSize: '0.95rem' }}>{transportAlloc.route_name} ({transportAlloc.route_code})</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--color-border)' }}>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>Boarding Stop:</span>
+                <strong style={{ color: 'var(--color-text-primary)', fontSize: '0.95rem' }}>{transportAlloc.stop_name} (⏰ {transportAlloc.pickup_time?.slice(0, 5)} AM)</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0' }}>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>Vehicle Number:</span>
+                <span className="badge badge-success">{transportAlloc.vehicle_number}</span>
+              </div>
+            </div>
+          ) : (
+            <div style={{ padding: '2rem 1.5rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.88rem' }}>
+              No active transport route allocation.
+            </div>
+          )}
         </div>
       </div>
 

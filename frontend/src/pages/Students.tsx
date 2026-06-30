@@ -78,7 +78,7 @@ function MyProfile() {
             { label: 'Email', value: me.person.email ?? '—' },
             { label: 'Phone', value: me.person.phone ?? '—' },
             { label: 'Enrolled On', value: me.enrollment_date?.slice(0, 10) ?? '—' },
-            { label: 'Student ID', value: me.student_id },
+            { label: 'Enrollment No', value: me.enrollment_number ?? '—' },
           ].map(f => (
             <div key={f.label}>
               <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{f.label}</div>
@@ -93,7 +93,7 @@ function MyProfile() {
 
 // Staff: Full student list with role-controlled actions
 function StudentList() {
-  const { can, user, isStudent } = usePermissions();
+  const { can, user, isStudent, isFaculty } = usePermissions();
   const [students, setStudents] = useState<Student[]>([]);
   const [total, setTotal]       = useState(0);
   const [page, setPage]         = useState(1);
@@ -298,6 +298,7 @@ function StudentList() {
           <h1>Students</h1>
           <p>{total.toLocaleString()} total records</p>
         </div>
+        {/* Only admins and registrar can enroll or bulk import */}
         {can('students.create') && (
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <button className="btn btn-secondary" onClick={() => setShowBulkImportModal(true)}>Bulk Import</button>
@@ -498,9 +499,12 @@ function StudentList() {
         </div>
       )}
 
-      <div className="tabs">
-        {TABS.map(t => <div key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => handleTabChange(t)}>{t}</div>)}
-      </div>
+      {/* Status filter tabs — hidden from faculty */}
+      {!isFaculty && (
+        <div className="tabs">
+          {TABS.map(t => <div key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => handleTabChange(t)}>{t}</div>)}
+        </div>
+      )}
 
       <div className="card">
         <div className="card-header">
@@ -533,7 +537,7 @@ function StudentList() {
                 <tr>
                   <th>Student</th><th>Enrollment No.</th><th>Semester</th>
                   <th>Status</th><th>CGPA</th><th>Contact</th>
-                  {can('students.update') && <th>Actions</th>}
+                  {can('students.update') && !isFaculty && <th>Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -555,7 +559,8 @@ function StudentList() {
                     <td><span className={`badge ${STATUS_BADGE[s.enrollment_status] ?? 'badge-muted'}`}>{s.enrollment_status}</span></td>
                     <td>{s.cgpa ? <strong style={{ color: parseFloat(s.cgpa) >= 7.5 ? 'var(--color-success)' : 'var(--accent-warning)' }}>{s.cgpa}</strong> : '—'}</td>
                     <td style={{ fontSize: '0.8rem' }}>{s.person.phone ?? s.person.email ?? '—'}</td>
-                    {can('students.update') && (
+                    {/* Action column — hidden for faculty (read-only view) */}
+                    {can('students.update') && !isFaculty && (
                       <td>
                         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                           <button className="btn btn-secondary btn-sm" onClick={() => setSelectedStudent(s)}>View</button>

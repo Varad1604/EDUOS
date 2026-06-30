@@ -178,20 +178,23 @@ export default function Transport() {
   };
 
   const fetchStudentAllocations = () => {
-    if (!isStudent || !user?.user_id) return;
+    if (!isStudent) return;
     setLoadingAllocations(true);
     
-    studentsApi.list()
+    // Use getMyProfile to reliably get own student_id
+    studentsApi.getMyProfile()
       .then(r => {
-        const studentList = r.data.data ?? [];
-        const ownStudent = studentList.find((s: Student) => s.person?.email === user?.username);
-        const sid = ownStudent?.student_id || user?.user_id;
-        
-        transportApi.allocations.listStudent(sid)
+        const studentId = r.data?.data?.student_id;
+        if (!studentId) {
+          setLoadingAllocations(false);
+          return;
+        }
+        return transportApi.allocations.listStudent(studentId)
           .then(r2 => setAllocations(r2.data.data ?? []))
           .catch(err => console.warn('Request failed:', err));
       })
       .catch(() => {
+        // fallback: try with user_id
         transportApi.allocations.listStudent(user?.user_id ?? '')
           .then(r => setAllocations(r.data.data ?? []))
           .catch(err => console.warn('Request failed:', err));
@@ -772,7 +775,7 @@ export default function Transport() {
                     <option value="">-- Choose Student --</option>
                     {students.map(st => (
                       <option key={st.student_id} value={st.student_id}>
-                        {st.person?.first_name} {st.person?.last_name} ({st.enrollment_number || 'N/A'}) - {st.student_id.substring(0, 8)}
+                        {st.person?.first_name} {st.person?.last_name} ({st.enrollment_number || 'N/A'})
                       </option>
                     ))}
                   </select>
@@ -899,7 +902,7 @@ export default function Transport() {
                       </td>
                       <td style={{ padding: '0.75rem' }}>
                         <div style={{ fontWeight: 600 }}>{alloc.student_name}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{alloc.student_id}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{alloc.enrollment_number || alloc.roll_number || '—'}</div>
                       </td>
                       <td style={{ padding: '0.75rem', fontWeight: 600 }}>
                         INR {parseFloat(alloc.fare_amount).toFixed(2)}

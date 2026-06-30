@@ -18,38 +18,107 @@ interface FacultyMember {
 }
 
 export default function Faculty() {
-  const { isStudent } = usePermissions();
+  const { isFaculty, isStudent, user } = usePermissions();
   const [faculty, setFaculty] = useState<FacultyMember[]>([]);
+  const [myProfile, setMyProfile] = useState<FacultyMember | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [designationFilter, setDesignationFilter] = useState('');
 
-  const fetchFaculty = () => {
+  useEffect(() => {
+    if (isStudent) { setLoading(false); return; }
     setLoading(true);
     academicsApi.faculty.list()
-      .then(r => setFaculty(r.data.data ?? []))
+      .then(r => {
+        const all: FacultyMember[] = r.data.data ?? [];
+        if (isFaculty) {
+          // Faculty only see their own profile
+          const me = all.find(f =>
+            f.email?.toLowerCase() === user?.username?.toLowerCase() ||
+            `${f.first_name} ${f.last_name ?? ''}`.toLowerCase().includes(user?.username?.toLowerCase() ?? '')
+          );
+          setMyProfile(me ?? null);
+        } else {
+          setFaculty(all);
+        }
+      })
       .catch(err => console.warn('Request failed:', err))
       .finally(() => setLoading(false));
-  };
-
-  useEffect(() => {
-    if (!isStudent) {
-      fetchFaculty();
-    }
-  }, [isStudent]);
+  }, [isFaculty, isStudent, user?.username]);
 
   if (isStudent) {
     return (
       <div className="empty-state">
         <h3>Access Denied</h3>
-        <p>Students are not authorized to view the administrative faculty registry.</p>
+        <p>Students are not authorized to view the faculty registry.</p>
       </div>
     );
   }
 
+  // Faculty view: personal profile card only
+  if (isFaculty) {
+    return (
+      <>
+        <Header title="My Faculty Profile" subtitle="Your academic profile and designation details" />
+        <div className="page-layout">
+          {loading ? (
+            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading profile…</div>
+          ) : !myProfile ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">👤</div>
+              <h3>Profile Not Found</h3>
+              <p>Your faculty profile could not be loaded. Please contact the Registrar.</p>
+            </div>
+          ) : (
+            <div className="card" style={{ maxWidth: 640 }}>
+              <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center', marginBottom: '1.5rem' }}>
+                <div style={{
+                  width: 64, height: 64, borderRadius: '50%',
+                  background: 'var(--color-primary-light)', color: 'var(--color-primary)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '1.5rem', fontWeight: 700, flexShrink: 0,
+                }}>
+                  {myProfile.first_name[0]}
+                </div>
+                <div>
+                  <h2 style={{ margin: 0 }}>{myProfile.first_name} {myProfile.last_name || ''}</h2>
+                  <span className={`badge ${
+                    myProfile.designation === 'Professor' ? 'badge-success' :
+                    myProfile.designation === 'AssocProf' ? 'badge-info' :
+                    myProfile.designation === 'AsstProf' ? 'badge-warning' : 'badge-muted'
+                  }`}>
+                    {myProfile.designation === 'AssocProf' ? 'Associate Professor' :
+                     myProfile.designation === 'AsstProf' ? 'Assistant Professor' : myProfile.designation}
+                  </span>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                {[
+                  ['Employee Code', myProfile.employee_code ?? 'N/A'],
+                  ['Department', myProfile.department_name ?? 'N/A'],
+                  ['Qualification', myProfile.qualification ?? 'N/A'],
+                  ['Specialization', myProfile.specialization ?? 'N/A'],
+                  ['Email', myProfile.email ?? 'N/A'],
+                  ['Phone', myProfile.phone ?? 'N/A'],
+                  ['Joining Date', myProfile.joining_date ? new Date(myProfile.joining_date).toLocaleDateString('en-IN') : 'N/A'],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <span className="form-label">{label}</span>
+                    <div className="form-input" style={{ background: 'var(--color-surface-2)' }}>{value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  // Admin / Registrar view: full faculty directory
   const filteredFaculty = faculty.filter(f => {
     const fullName = `${f.first_name} ${f.last_name || ''}`.toLowerCase();
-    const matchesSearch = fullName.includes(search.toLowerCase()) || 
+    const matchesSearch = fullName.includes(search.toLowerCase()) ||
                           (f.employee_code && f.employee_code.toLowerCase().includes(search.toLowerCase())) ||
                           (f.department_name && f.department_name.toLowerCase().includes(search.toLowerCase()));
     const matchesDesignation = designationFilter ? f.designation === designationFilter : true;

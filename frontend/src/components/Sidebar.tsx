@@ -1,8 +1,6 @@
-import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store';
 import { usePermissions } from '../hooks/usePermissions';
-import { hostelApi, transportApi } from '../api';
 
 interface NavItem {
   label: string;
@@ -22,7 +20,6 @@ const NAV: { section: string; items: NavItem[] }[] = [
     { label: 'Quizzes',      path: '/quizzes',     permission: 'courses.read' },
     { label: 'Timetable',    path: '/timetable',   permission: 'courses.read' },
     { label: 'Attendance',   path: '/attendance',  permission: 'attendance.read OR attendance.create' },
-    { label: 'Leave',        path: '/leave',       permission: 'attendance.read OR attendance.create' },
     { label: 'Library',      path: '/library',     permission: 'library.manage OR library.view' },
     { label: 'Hostel',       path: '/hostel',      permission: 'hostel.manage OR hostel.view' },
     { label: 'Transport',    path: '/transport',   permission: 'transport.manage OR transport.view' },
@@ -40,6 +37,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
     { label: 'Audit Logs',   path: '/audit-logs',   permission: 'reports.read' },
   ]},
   { section: 'Campus Life', items: [
+    { label: 'Leave',        path: '/leave',        permission: 'attendance.read OR attendance.create' },
     { label: 'Placement',    path: '/placement',    permission: 'placement.manage OR placement.apply OR placement.view' },
     { label: 'Medical',      path: '/medical',      permission: 'medical.manage OR medical.view' },
   ]},
@@ -244,46 +242,25 @@ function SidebarIcon({ label }: { label: string }) {
 
 export default function Sidebar() {
   const { user, clearAuth } = useAuthStore();
-  const { granted, role, isAdmin, isStudent } = usePermissions();
+  const { granted, role, isAdmin, isStudent, isFaculty } = usePermissions();
   const nav = useNavigate();
   const loc = useLocation();
 
-  const [hasHostel, setHasHostel] = useState(true);
-  const [hasTransport, setHasTransport] = useState(true);
+  // Faculty: pages they should NEVER see (no exams/library/medical/finance for teaching staff)
+  const FACULTY_BLOCKED = ['/exams', '/hall-tickets', '/results', '/library', '/medical', '/fees', '/scholarships', '/accounts', '/reports', '/audit-logs'];
 
-  useEffect(() => {
-    if (isStudent && user?.user_id) {
-      setHasHostel(false);
-      setHasTransport(false);
-
-      Promise.all([
-        hostelApi.allocations.listStudent(user.user_id)
-          .then(res => {
-            const list = res.data?.data ?? [];
-            if (list.some((a: any) => a.status === 'Active')) {
-              setHasHostel(true);
-            }
-          })
-          .catch(() => {}),
-        transportApi.allocations.listStudent(user.user_id)
-          .then(res => {
-            const list = res.data?.data ?? [];
-            if (list.some((a: any) => a.status === 'Active')) {
-              setHasTransport(true);
-            }
-          })
-          .catch(() => {})
-      ]);
-    }
-  }, [role, user?.user_id, isStudent]);
+  // Students: pages they should NEVER see
+  const STUDENT_BLOCKED = ['/leave', '/faculty'];
 
   const isVisible = (item: NavItem): boolean => {
     if (item.path === '/audit-logs') return isAdmin;
-    if (item.path === '/faculty' && isStudent) return false;
-    if (isStudent) {
-      if (item.path === '/hostel') return hasHostel;
-      if (item.path === '/transport') return hasTransport;
-    }
+
+    // Faculty-specific blocks
+    if (isFaculty && FACULTY_BLOCKED.includes(item.path)) return false;
+
+    // Student-specific blocks
+    if (isStudent && STUDENT_BLOCKED.includes(item.path)) return false;
+
     if (!item.permission) return true;
     return item.permission.split(' OR ').some(p => granted.includes(p as never));
   };
