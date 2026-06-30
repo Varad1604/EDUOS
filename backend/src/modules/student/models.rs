@@ -86,6 +86,7 @@ pub struct CreateStudentRequest {
 
     // Student-specific
     pub enrollment_number:  Option<String>,
+    pub enrollment_status:  Option<String>,
     pub enrollment_date:    Option<NaiveDate>,
     pub branch_id:          Option<Uuid>,
     pub current_semester:   Option<i32>,
@@ -97,6 +98,23 @@ pub struct CreateStudentRequest {
     pub guardian_relation:  Option<String>,
     pub program_id:         Option<Uuid>,
     pub enrollment_year:    Option<i32>,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct GuardianContactRequest {
+    #[validate(length(min = 1, max = 100))]
+    pub first_name:  String,
+    pub last_name:   Option<String>,
+    pub relation:    String,
+    pub phone:       Option<String>,
+    pub email:       Option<String>,
+    pub is_primary:  bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BulkImportRequest {
+    // Usually bulk import would involve multipart form for a CSV, but we can also just accept a list
+    pub students: Vec<CreateStudentRequest>,
 }
 
 #[derive(Debug, Deserialize, Validate)]

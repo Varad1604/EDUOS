@@ -5,16 +5,11 @@ use axum::{
     Extension, Json,
 };
 use serde::Deserialize;
-use serde_json::json;
 use uuid::Uuid;
 use validator::Validate;
 
-use crate::{error::AppError, middleware::auth::Claims, state::AppState};
+use crate::{error::AppError, middleware::auth::Claims, response::ok, state::AppState};
 use super::{models::*, service};
-
-fn ok<T: serde::Serialize>(data: T) -> Json<serde_json::Value> {
-    Json(json!({ "success": true, "data": data }))
-}
 
 #[derive(Deserialize)]
 pub struct StudentFilter {

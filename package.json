@@ -1,0 +1,11 @@
+{
+  "name": "eduos-tools",
+  "version": "1.0.0",
+  "description": "Helper scripts for EduOS",
+  "scripts": {
+    "migrate:install": "cargo install sqlx-cli --no-default-features --features postgres",
+    "migrate:run": "sqlx migrate run",
+    "migrate:revert": "sqlx migrate revert",
+    "migrate:add": "sqlx migrate add -r"
+  }
+}

@@ -1,39 +1,54 @@
-import React from 'react';
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './store';
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import Students from './pages/Students';
-import Courses from './pages/Courses';
-import Timetable from './pages/Timetable';
-import Attendance from './pages/Attendance';
-import Exams from './pages/Exams';
-import HallTickets from './pages/HallTickets';
-import Results from './pages/Results';
-import Fees from './pages/Fees';
-import Scholarships from './pages/Scholarships';
-import Accounts from './pages/Accounts';
-import Reports from './pages/Reports';
-import AuditLogs from './pages/AuditLogs';
-import Library from './pages/Library';
-import Hostel from './pages/Hostel';
-import Transport from './pages/Transport';
-import Placement from './pages/Placement';
-import Medical from './pages/Medical';
+
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Students = lazy(() => import('./pages/Students'));
+const Courses = lazy(() => import('./pages/Courses'));
+const Timetable = lazy(() => import('./pages/Timetable'));
+const Attendance = lazy(() => import('./pages/Attendance'));
+const LeaveManagement = lazy(() => import('./pages/LeaveManagement'));
+const Exams = lazy(() => import('./pages/Exams'));
+const HallTickets = lazy(() => import('./pages/HallTickets'));
+const Results = lazy(() => import('./pages/Results'));
+const Fees = lazy(() => import('./pages/Fees'));
+const Scholarships = lazy(() => import('./pages/Scholarships'));
+const Accounts = lazy(() => import('./pages/Accounts'));
+const Reports = lazy(() => import('./pages/Reports'));
+const AuditLogs = lazy(() => import('./pages/AuditLogs'));
+const Library = lazy(() => import('./pages/Library'));
+const Hostel = lazy(() => import('./pages/Hostel'));
+const Transport = lazy(() => import('./pages/Transport'));
+const Placement = lazy(() => import('./pages/Placement'));
+const Medical = lazy(() => import('./pages/Medical'));
+const Quizzes = lazy(() => import('./pages/Quizzes'));
+const Notifications = lazy(() => import('./pages/Notifications'));
+const Faculty = lazy(() => import('./pages/Faculty'));
 
 function ProtectedLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="app-layout">
       <Sidebar />
-      <div className="main-content">{children}</div>
+      <div className="main-content">
+        <Suspense fallback={
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', color: 'var(--text-muted)' }}>
+            <div style={{ width: 40, height: 40, border: '3px solid var(--border)', borderTopColor: 'var(--accent-primary)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', marginBottom: '1rem' }} />
+            <div style={{ fontSize: '0.9rem', fontWeight: 500 }}>Loading View…</div>
+          </div>
+        }>
+          {children}
+        </Suspense>
+      </div>
     </div>
   );
 }
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const isAuthenticated = useAuthStore(s => s.isAuthenticated);
-  return isAuthenticated() ? <>{children}</> : <Navigate to="/login" replace />;
+  const token = useAuthStore(s => s.token);
+  const user  = useAuthStore(s => s.user);
+  return (!!token && !!user) ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
 function RequireRole({ children, allowedRoles }: { children: React.ReactNode; allowedRoles: string[] }) {
@@ -64,6 +79,14 @@ export default function App() {
             </RequireRole>
           </RequireAuth>
         } />
+
+        <Route path="/faculty" element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['Principal', 'Registrar', 'Faculty']}>
+              <ProtectedLayout><Faculty /></ProtectedLayout>
+            </RequireRole>
+          </RequireAuth>
+        } />
         
         <Route path="/courses" element={
           <RequireAuth>
@@ -85,6 +108,14 @@ export default function App() {
           <RequireAuth>
             <RequireRole allowedRoles={['Principal', 'Registrar', 'Faculty', 'Student']}>
               <ProtectedLayout><Attendance /></ProtectedLayout>
+            </RequireRole>
+          </RequireAuth>
+        } />
+        
+        <Route path="/leave" element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['Principal', 'Registrar', 'Faculty', 'Student']}>
+              <ProtectedLayout><LeaveManagement /></ProtectedLayout>
             </RequireRole>
           </RequireAuth>
         } />
@@ -189,6 +220,22 @@ export default function App() {
           <RequireAuth>
             <RequireRole allowedRoles={['Principal', 'Registrar', 'Faculty', 'Student']}>
               <ProtectedLayout><Medical /></ProtectedLayout>
+            </RequireRole>
+          </RequireAuth>
+        } />
+
+        <Route path="/quizzes" element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['Principal', 'Registrar', 'Faculty', 'Student']}>
+              <ProtectedLayout><Quizzes /></ProtectedLayout>
+            </RequireRole>
+          </RequireAuth>
+        } />
+
+        <Route path="/notifications" element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['Principal', 'Registrar', 'Faculty', 'Student']}>
+              <ProtectedLayout><Notifications /></ProtectedLayout>
             </RequireRole>
           </RequireAuth>
         } />

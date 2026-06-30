@@ -7,6 +7,8 @@ pub async fn create_pool(cfg: &DatabaseConfig) -> Result<PgPool> {
         .max_connections(cfg.max_connections)
         .min_connections(cfg.min_connections)
         .acquire_timeout(std::time::Duration::from_secs(10))
+        .idle_timeout(std::time::Duration::from_secs(300))
+        .max_lifetime(std::time::Duration::from_secs(1800))
         .connect(&cfg.url)
         .await
         .context("Failed to connect to PostgreSQL")?;
@@ -94,7 +96,7 @@ async fn seed_database(pool: &PgPool) -> Result<()> {
     .execute(pool)
     .await?;
 
-    let admin_pass = crate::modules::auth::service::hash_password("password123").await?;
+    let admin_pass = crate::modules::auth::service::hash_password("Password@123").await?;
     let admin_user_id = uuid::Uuid::new_v4();
     sqlx::query(
         "INSERT INTO users (user_id, person_id, institution_id, username, password_hash, role_id)
@@ -119,7 +121,7 @@ async fn seed_database(pool: &PgPool) -> Result<()> {
     .execute(pool)
     .await?;
 
-    let registrar_pass = crate::modules::auth::service::hash_password("password123").await?;
+    let registrar_pass = crate::modules::auth::service::hash_password("Password@123").await?;
     sqlx::query(
         "INSERT INTO users (user_id, person_id, institution_id, username, password_hash, role_id)
          VALUES ($1, $2, $3, 'registrar', $4, $5)"
@@ -143,7 +145,7 @@ async fn seed_database(pool: &PgPool) -> Result<()> {
     .execute(pool)
     .await?;
 
-    let feemanager_pass = crate::modules::auth::service::hash_password("password123").await?;
+    let feemanager_pass = crate::modules::auth::service::hash_password("Password@123").await?;
     sqlx::query(
         "INSERT INTO users (user_id, person_id, institution_id, username, password_hash, role_id)
          VALUES ($1, $2, $3, 'feemanager', $4, $5)"
@@ -178,7 +180,7 @@ async fn seed_database(pool: &PgPool) -> Result<()> {
     .execute(pool)
     .await?;
 
-    let faculty_pass = crate::modules::auth::service::hash_password("password123").await?;
+    let faculty_pass = crate::modules::auth::service::hash_password("Password@123").await?;
     sqlx::query(
         "INSERT INTO users (user_id, person_id, institution_id, username, password_hash, role_id)
          VALUES ($1, $2, $3, 'faculty', $4, $5)"
@@ -239,7 +241,7 @@ async fn seed_database(pool: &PgPool) -> Result<()> {
     .execute(pool)
     .await?;
 
-    let student_pass = crate::modules::auth::service::hash_password("password123").await?;
+    let student_pass = crate::modules::auth::service::hash_password("Password@123").await?;
     sqlx::query(
         "INSERT INTO users (user_id, person_id, institution_id, username, password_hash, role_id)
          VALUES ($1, $2, $3, 'student', $4, $5)"

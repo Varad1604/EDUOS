@@ -27,7 +27,7 @@ const fmt_pkg = (v?: number) => v ? `₹ ${v} LPA` : '—';
 const fmt_date = (d: string) => new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 
 /* ─── Tabs ──────────────────────────────────────────────────────────────────── */
-type Tab = 'overview' | 'companies' | 'drives' | 'applications' | 'offers';
+type Tab = 'overview' | 'companies' | 'drives' | 'applications' | 'offers' | 'interviews' | 'alumni' | 'analytics';
 
 export default function Placement() {
   const { granted } = usePermissions();
@@ -47,6 +47,14 @@ export default function Placement() {
   const [toast, setToast] = useState('');
   const [resolvedStudentId, setResolvedStudentId] = useState('');
   const [hoveredStage, setHoveredStage] = useState<number | null>(null);
+
+  // New placement states
+  const [interviews, setInterviews] = useState<any[]>([]);
+  const [alumni, setAlumni] = useState<any[]>([]);
+  const [analytics, setAnalytics] = useState<any>(null);
+
+  const [newInterview, setNewInterview] = useState({ application_id: '', round_name: '', scheduled_at: '', duration_minutes: 30, location_or_url: '' });
+  const [newAlumni, setNewAlumni] = useState({ student_id: '', company_name: '', designation: '', ctc_lpa: '', joining_date: '' });
 
   // Modals
   const [showCompanyModal, setShowCompanyModal] = useState(false);
@@ -83,18 +91,24 @@ export default function Placement() {
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [st, co, dr, ap, of_] = await Promise.all([
+      const [st, co, dr, ap, of_, ints, alm, aly] = await Promise.all([
         placementApi.stats(),
         placementApi.listCompanies(),
         placementApi.listDrives(),
         canManage ? placementApi.listApplications() : placementApi.myApplications(resolvedStudentId || user?.user_id || ''),
         canManage ? placementApi.listOffers() : Promise.resolve([]),
+        placementApi.listInterviews().catch(() => []),
+        placementApi.listAlumniPlacements().catch(() => []),
+        placementApi.getAnalyticsStats().catch(() => null),
       ]);
       setStats(st);
       setCompanies(co);
       setDrives(dr);
       setApplications(ap);
       setOffers(of_);
+      setInterviews(ints);
+      setAlumni(alm);
+      setAnalytics(aly);
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
   }, [canManage, user, resolvedStudentId]);
@@ -112,7 +126,7 @@ export default function Placement() {
             roll_number: st.enrollment_number || st.roll_number || ''
           })));
         })
-        .catch(() => {});
+        .catch(err => console.warn('Request failed:', err));
     }
   }, [canManage]);
 
@@ -126,7 +140,7 @@ export default function Placement() {
             setResolvedStudentId(ownStudent.student_id);
           }
         })
-        .catch(() => {});
+        .catch(err => console.warn('Request failed:', err));
     }
   }, [canManage, user?.username]);
 
@@ -535,6 +549,12 @@ export default function Placement() {
             <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
               <h2>Apply to Drive</h2>
               <p style={{ color: 'var(--text-secondary)', marginBottom: 20 }}>You are applying to <strong>{showApplyModal.drive_title}</strong> at {showApplyModal.company_name}.</p>
+              
+              <div className="form-group">
+                <label>Resume URL (Google Drive / Dropbox / LinkedIn)</label>
+                <input id="apply-resume-url" className="form-input" placeholder="https://drive.google.com/..." />
+              </div>
+
               {canManage ? (
                 <div>
                   <div className="form-group"><label>Select Student</label>
@@ -545,13 +565,15 @@ export default function Placement() {
                   </div>
                   <button id="confirm-apply-btn" className="btn-primary" onClick={async () => {
                     const sel = (document.getElementById('apply-student-select') as HTMLSelectElement).value;
+                    const resUrl = (document.getElementById('apply-resume-url') as HTMLInputElement).value;
                     if (!sel) return alert('Select a student');
-                    try { await placementApi.apply({ drive_id: showApplyModal.drive_id, student_id: sel }); setShowApplyModal(null); showToast('Applied!'); loadAll(); } catch (e: any) { alert(e.message); }
+                    try { await placementApi.apply({ drive_id: showApplyModal.drive_id, student_id: sel, resume_url: resUrl || undefined }); setShowApplyModal(null); showToast('Applied!'); loadAll(); } catch (e: any) { alert(e.message); }
                   }}>Confirm Application</button>
                 </div>
               ) : (
                 <button id="confirm-apply-btn" className="btn-primary" onClick={async () => {
-                  try { await placementApi.apply({ drive_id: showApplyModal.drive_id, student_id: resolvedStudentId || user?.user_id || '' }); setShowApplyModal(null); showToast('Applied successfully!'); loadAll(); } catch (e: any) { alert(e.message); }
+                  const resUrl = (document.getElementById('apply-resume-url') as HTMLInputElement).value;
+                  try { await placementApi.apply({ drive_id: showApplyModal.drive_id, student_id: resolvedStudentId || user?.user_id || '', resume_url: resUrl || undefined }); setShowApplyModal(null); showToast('Applied successfully!'); loadAll(); } catch (e: any) { alert(e.message); }
                 }}>Confirm — Apply Now</button>
               )}
               <button className="btn-secondary" style={{ marginTop: 10 }} onClick={() => setShowApplyModal(null)}>Cancel</button>
@@ -781,12 +803,247 @@ export default function Placement() {
     );
   }
 
+  function InterviewsTab() {
+    const handleSchedule = async (e: React.FormEvent) => {
+      e.preventDefault();
+      try {
+        await placementApi.scheduleInterview({
+          application_id: newInterview.application_id,
+          round_name: newInterview.round_name,
+          scheduled_at: new Date(newInterview.scheduled_at).toISOString(),
+          duration_minutes: Number(newInterview.duration_minutes),
+          location_or_url: newInterview.location_or_url || null
+        });
+        showToast('Interview scheduled!');
+        setNewInterview({ application_id: '', round_name: '', scheduled_at: '', duration_minutes: 30, location_or_url: '' });
+        loadAll();
+      } catch (err: any) {
+        alert(err.message || 'Failed to schedule');
+      }
+    };
+
+    const handleUpdateStatus = async (id: string, status: string) => {
+      try {
+        await placementApi.updateInterviewStatus(id, { status });
+        showToast(`Interview status updated to ${status}`);
+        loadAll();
+      } catch (err: any) {
+        alert(err.message || 'Failed to update status');
+      }
+    };
+
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: canManage ? '1fr 340px' : '1fr', gap: 24 }}>
+        <div>
+          <h3 style={{ color: 'var(--text)', marginBottom: 20 }}>Scheduled Interviews ({interviews.length})</h3>
+          {interviews.length === 0 ? (
+            <p style={{ color: 'var(--text-muted)' }}>No interviews scheduled yet.</p>
+          ) : (
+            <div style={{ display: 'grid', gap: 12 }}>
+              {interviews.map((int: any) => (
+                <div key={int.interview_id} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                  <div>
+                    <div style={{ fontWeight: 600, color: 'var(--text)' }}>🎯 {int.round_name}</div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                      🕒 {new Date(int.scheduled_at).toLocaleString()} ({int.duration_minutes} mins)
+                    </div>
+                    {int.location_or_url && (
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                        📍 Venue/Link: <a href={int.location_or_url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-primary)' }}>{int.location_or_url}</a>
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    {pill(int.status)}
+                    {canManage && int.status === 'Scheduled' && (
+                      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                        <button className="btn-secondary" style={{ fontSize: '0.72rem', padding: '3px 8px' }} onClick={() => handleUpdateStatus(int.interview_id, 'Completed')}>✅ Done</button>
+                        <button className="btn-secondary" style={{ fontSize: '0.72rem', padding: '3px 8px', color: 'var(--accent-danger)' }} onClick={() => handleUpdateStatus(int.interview_id, 'Cancelled')}>❌ Cancel</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {canManage && (
+          <div className="card" style={{ padding: '20px' }}>
+            <h3 style={{ margin: '0 0 16px 0' }}>📅 Schedule Round</h3>
+            <form onSubmit={handleSchedule} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div className="form-group">
+                <label>Select Application *</label>
+                <select className="form-input" value={newInterview.application_id} onChange={e => setNewInterview({ ...newInterview, application_id: e.target.value })} required>
+                  <option value="">-- Choose Candidate --</option>
+                  {applications.map(a => (
+                    <option key={a.application_id} value={a.application_id}>
+                      {a.student_name} - {a.company_name} ({a.job_role})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Round Name *</label>
+                <input className="form-input" placeholder="e.g. Technical Interview 1" value={newInterview.round_name} onChange={e => setNewInterview({ ...newInterview, round_name: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label>Date & Time *</label>
+                <input className="form-input" type="datetime-local" value={newInterview.scheduled_at} onChange={e => setNewInterview({ ...newInterview, scheduled_at: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label>Duration (minutes)</label>
+                <input className="form-input" type="number" value={newInterview.duration_minutes} onChange={e => setNewInterview({ ...newInterview, duration_minutes: Number(e.target.value) })} />
+              </div>
+              <div className="form-group">
+                <label>Location or URL</label>
+                <input className="form-input" placeholder="Google Meet link or Meeting Room" value={newInterview.location_or_url} onChange={e => setNewInterview({ ...newInterview, location_or_url: e.target.value })} />
+              </div>
+              <button type="submit" className="btn-primary" style={{ width: '100%' }}>Schedule Interview</button>
+            </form>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function AlumniTab() {
+    const handleRegister = async (e: React.FormEvent) => {
+      e.preventDefault();
+      try {
+        await placementApi.registerAlumniPlacement({
+          student_id: newAlumni.student_id,
+          company_name: newAlumni.company_name,
+          designation: newAlumni.designation,
+          ctc_lpa: parseFloat(newAlumni.ctc_lpa),
+          joining_date: newAlumni.joining_date
+        });
+        showToast('Alumni placement tracked!');
+        setNewAlumni({ student_id: '', company_name: '', designation: '', ctc_lpa: '', joining_date: '' });
+        loadAll();
+      } catch (err: any) {
+        alert(err.message || 'Failed to register');
+      }
+    };
+
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: canManage ? '1fr 340px' : '1fr', gap: 24 }}>
+        <div>
+          <h3 style={{ color: 'var(--text)', marginBottom: 20 }}>Alumni Placements tracked ({alumni.length})</h3>
+          {alumni.length === 0 ? (
+            <p style={{ color: 'var(--text-muted)' }}>No alumni career records tracked yet.</p>
+          ) : (
+            <div style={{ display: 'grid', gap: 12 }}>
+              {alumni.map((alm: any) => (
+                <div key={alm.alumni_id} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontWeight: 600, color: 'var(--text)' }}>{alm.company_name}</div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{alm.designation}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>Joined on: {fmt_date(alm.joining_date)}</div>
+                  </div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#22c55e' }}>
+                    INR {parseFloat(alm.ctc_lpa).toFixed(2)} LPA
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {canManage && (
+          <div className="card" style={{ padding: '20px' }}>
+            <h3 style={{ margin: '0 0 16px 0' }}>🎓 Register Alumni</h3>
+            <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div className="form-group">
+                <label>Student Profile *</label>
+                <select className="form-input" value={newAlumni.student_id} onChange={e => setNewAlumni({ ...newAlumni, student_id: e.target.value })} required>
+                  <option value="">-- Choose Student --</option>
+                  {students.map(s => (
+                    <option key={s.student_id} value={s.student_id}>{s.full_name} ({s.roll_number})</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Company Name *</label>
+                <input className="form-input" value={newAlumni.company_name} onChange={e => setNewAlumni({ ...newAlumni, company_name: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label>Designation *</label>
+                <input className="form-input" value={newAlumni.designation} onChange={e => setNewAlumni({ ...newAlumni, designation: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label>CTC (LPA) *</label>
+                <input className="form-input" type="number" step="0.01" value={newAlumni.ctc_lpa} onChange={e => setNewAlumni({ ...newAlumni, ctc_lpa: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label>Joining Date *</label>
+                <input className="form-input" type="date" value={newAlumni.joining_date} onChange={e => setNewAlumni({ ...newAlumni, joining_date: e.target.value })} required />
+              </div>
+              <button type="submit" className="btn-primary" style={{ width: '100%' }}>Track Placement</button>
+            </form>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function AnalyticsTab() {
+    if (!analytics) return <div style={{ color: 'var(--text-secondary)' }}>No YoY or branch-wise analytics data available. Complete recruitment offer acceptances to view metrics.</div>;
+
+    const branches = Object.keys(analytics.branch_offers || {});
+    const years = Object.keys(analytics.yoy_package_avg || {});
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+          
+          {/* Branch-wise placement distribution */}
+          <div className="card" style={{ padding: '20px' }}>
+            <h3 style={{ margin: '0 0 16px 0' }}>🏢 Branch-wise Offers</h3>
+            {branches.length === 0 ? <p style={{ color: 'var(--text-secondary)' }}>No branch offers recorded.</p> : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {branches.map(br => (
+                  <div key={br} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ width: 60, fontWeight: 600 }}>{br}</div>
+                    <div style={{ flex: 1, height: 12, background: 'rgba(99,102,241,0.1)', borderRadius: 6, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', background: 'var(--accent-primary)', width: `${Math.min(100, (analytics.branch_offers[br] / 10) * 100)}%` }} />
+                    </div>
+                    <div style={{ width: 40, textAlign: 'right', fontWeight: 600 }}>{analytics.branch_offers[br]}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* YoY Package Growth */}
+          <div className="card" style={{ padding: '20px' }}>
+            <h3 style={{ margin: '0 0 16px 0' }}>📈 Average Package growth (YoY)</h3>
+            {years.length === 0 ? <p style={{ color: 'var(--text-secondary)' }}>No historical average CTC packages data recorded.</p> : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {years.map(yr => (
+                  <div key={yr} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                    <strong style={{ color: 'var(--text-secondary)' }}>Batch Year {yr}</strong>
+                    <strong style={{ color: '#22c55e' }}>INR {analytics.yoy_package_avg[yr]?.toFixed(2)} LPA</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+        </div>
+      </div>
+    );
+  }
+
   const tabs: { id: Tab; label: string; icon: string }[] = [
     { id: 'overview', label: 'Overview', icon: '📊' },
     { id: 'companies', label: 'Companies', icon: '🏢' },
     { id: 'drives', label: 'Drives', icon: '📋' },
     { id: 'applications', label: canManage ? 'Applications' : 'My Applications', icon: '📨' },
     ...(canManage ? [{ id: 'offers' as Tab, label: 'Offers', icon: '🎁' }] : []),
+    { id: 'interviews', label: 'Interviews', icon: '📅' },
+    { id: 'alumni', label: 'Alumni Placements', icon: '🎓' },
+    { id: 'analytics', label: 'YoY Analytics', icon: '📈' },
   ];
 
   return (
@@ -818,6 +1075,9 @@ export default function Placement() {
           {tab === 'drives' && <DrivesTab />}
           {tab === 'applications' && <ApplicationsTab />}
           {tab === 'offers' && <OffersTab />}
+          {tab === 'interviews' && <InterviewsTab />}
+          {tab === 'alumni' && <AlumniTab />}
+          {tab === 'analytics' && <AnalyticsTab />}
         </>
       )}
     </div>

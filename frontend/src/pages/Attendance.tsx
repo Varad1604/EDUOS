@@ -43,7 +43,7 @@ function MyAttendance() {
         }
         setSummaries(result);
       })
-      .catch(() => {})
+      .catch(err => console.warn('Request failed:', err))
       .finally(() => setLoading(false));
   }, [user?.username]);
 
@@ -147,12 +147,12 @@ function MarkAttendance() {
       const list = r.data.data ?? [];
       setClasses(list);
       if (list.length > 0) setSelectedClassId(list[0].class_id);
-    }).catch(() => {});
+    }).catch(err => console.warn('Request failed:', err));
     academicsApi.courses.list().then(r => {
       const list = r.data.data ?? [];
       setCourses(list);
       if (list.length > 0) setSelectedCourseId(list[0].course_id);
-    }).catch(() => {});
+    }).catch(err => console.warn('Request failed:', err));
   }, []);
 
   const fetchStudents = async () => {
@@ -183,7 +183,7 @@ function MarkAttendance() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!can('attendance.mark')) return;
+    if (!can('attendance.create')) return;
     setError(''); setMessage('');
     academicsApi.attendance.markBulk({
       course_id: selectedCourseId, class_id: selectedClassId, date,
@@ -292,7 +292,7 @@ function MarkAttendance() {
       )}
 
       {/* Biometric CSV Import Panel */}
-      {can('attendance.mark') && totalEnrolled > 0 && (
+      {can('attendance.create') && totalEnrolled > 0 && (
         <div className="card" style={{ padding: '1rem', marginBottom: '1.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', background: 'var(--card-bg-secondary)', border: '1px dashed var(--border-color)' }}>
           <div style={{ flex: 1, minWidth: '250px' }}>
             <h4 style={{ margin: 0, fontSize: '0.85rem', fontWeight: 'bold' }}>📂 Bulk Import RFID / Biometric Logs</h4>
@@ -319,7 +319,7 @@ function MarkAttendance() {
           <div className="empty-state"><div className="empty-state-icon">✅</div><h3>No students in this class</h3></div>
         ) : (
           <>
-            {can('attendance.mark') && (
+            {can('attendance.create') && (
               <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', justifyContent: 'flex-end' }}>
                 <button className="btn btn-secondary btn-sm" onClick={() => { const s = { ...attendanceStates }; students.forEach(st => { s[st.student_id] = 'Present'; }); setAttendanceStates(s); }}>✓ All Present</button>
                 <button className="btn btn-secondary btn-sm" onClick={() => { const s = { ...attendanceStates }; students.forEach(st => { s[st.student_id] = 'Absent'; }); setAttendanceStates(s); }}>✗ All Absent</button>
@@ -330,7 +330,7 @@ function MarkAttendance() {
                 <thead>
                   <tr>
                     <th>Student</th><th>Enroll No.</th><th>Attended / Total</th><th>%</th>
-                    {can('attendance.mark') && <th>Today's Status</th>}
+                    {can('attendance.create') && <th>Today's Status</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -378,7 +378,7 @@ function MarkAttendance() {
                           )}
                         </div>
                       </td>
-                      {can('attendance.mark') && (
+                      {can('attendance.create') && (
                         <td>
                           <div style={{ display: 'flex', gap: '0.25rem' }}>
                             {['Present', 'Absent', 'Leave'].map(status => (
@@ -397,7 +397,7 @@ function MarkAttendance() {
                 </tbody>
               </table>
             </div>
-            {can('attendance.mark') && (
+            {can('attendance.create') && (
               <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>
                 <button className="btn btn-primary" onClick={handleSubmit}>Submit Attendance</button>
               </div>
@@ -409,11 +409,77 @@ function MarkAttendance() {
   );
 }
 
+function DefaulterAlerts() {
+  const [defaulters, setDefaulters] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    academicsApi.attendance.defaulters()
+      .then(r => setDefaulters(r.data?.data ?? []))
+      .catch(err => console.warn('Failed to load defaulters', err))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div style={{ padding: '2rem', textAlign: 'center' }}>Loading defaulters...</div>;
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h3>Defaulter Alerts (&lt; 75% Attendance)</h3>
+        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>Students who are ineligible for exams due to attendance shortage.</p>
+      </div>
+      {defaulters.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-state-icon">✅</div>
+          <h3>All Good!</h3>
+          <p>No students are currently falling below the 75% attendance threshold.</p>
+        </div>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Student</th><th>Enrollment No.</th><th>Course</th><th>Attendance</th></tr>
+            </thead>
+            <tbody>
+              {defaulters.map((d, i) => (
+                <tr key={i}>
+                  <td>
+                    <div style={{ fontWeight: 600 }}>{d.first_name} {d.last_name || ''}</div>
+                  </td>
+                  <td>{d.enrollment_number || '—'}</td>
+                  <td>{d.course_code} - {d.course_name}</td>
+                  <td>
+                    <span className="badge badge-danger">{d.percentage.toFixed(1)}%</span>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{d.present_count} / {d.total_classes} classes</div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StaffAttendanceTabs() {
+  const [activeTab, setActiveTab] = useState('Mark');
+  return (
+    <>
+      <div className="tabs">
+        <div className={`tab ${activeTab === 'Mark' ? 'active' : ''}`} onClick={() => setActiveTab('Mark')}>Mark Attendance</div>
+        <div className={`tab ${activeTab === 'Defaulters' ? 'active' : ''}`} onClick={() => setActiveTab('Defaulters')}>Defaulter Alerts</div>
+      </div>
+      {activeTab === 'Mark' ? <MarkAttendance /> : <DefaulterAlerts />}
+    </>
+  );
+}
+
 // ─── Page router ──────────────────────────────────────────────────────────────
 export default function Attendance() {
   const { can, isStudent } = usePermissions();
 
-  if (!can('attendance.mark') && !can('attendance.viewAll') && !can('attendance.viewOwn')) {
+  if (!can('attendance.read') && !can('attendance.create')) {
     return (
       <>
         <Header title="Attendance" subtitle="Access denied" />
@@ -436,7 +502,7 @@ export default function Attendance() {
           <h1>{isStudent ? 'My Attendance Record' : 'Attendance Registry'}</h1>
           <p>{isStudent ? 'Course-wise attendance and 75% eligibility status' : 'Mark daily attendance and monitor eligibility thresholds'}</p>
         </div>
-        {isStudent ? <MyAttendance /> : <MarkAttendance />}
+        {isStudent ? <MyAttendance /> : <StaffAttendanceTabs />}
       </div>
     </>
   );

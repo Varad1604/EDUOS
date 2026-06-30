@@ -9,7 +9,7 @@ use crate::{
     middleware::auth::Claims,
     modules::examination::models::*,
 };
-use super::super::student::service::log_event;
+use crate::audit::log_event;
 
 pub async fn create_exam(
     db: &PgPool,
@@ -17,15 +17,30 @@ pub async fn create_exam(
     claims: &Claims,
     req: CreateExamRequest,
 ) -> Result<Exam, AppError> {
+    // Clash Detection
+    let existing_exam = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM exams WHERE class_id = $1 AND scheduled_date = $2 AND scheduled_time = $3 AND soft_deleted = false"
+    )
+    .bind(req.class_id)
+    .bind(req.scheduled_date)
+    .bind(req.scheduled_time)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    if existing_exam > 0 {
+        return Err(AppError::UnprocessableEntity("Exam timetable clash detected for this class at this time.".to_string()));
+    }
+
     let exam = sqlx::query_as::<_, Exam>(
         r#"
         INSERT INTO exams
             (exam_id, institution_id, exam_code, course_id, class_id, exam_type,
              scheduled_date, scheduled_time, duration_minutes, exam_mode,
-             max_marks, min_marks, invigilator_faculty_id)
+             max_marks, min_marks, invigilator_faculty_id, require_seating)
         VALUES
             (gen_random_uuid(), $1, $2, $3, $4, $5,
-             $6, $7, $8, $9, $10, $11, $12)
+             $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING *
         "#,
     )
@@ -41,6 +56,7 @@ pub async fn create_exam(
     .bind(req.max_marks.unwrap_or(100))
     .bind(req.min_marks.unwrap_or(35))
     .bind(req.invigilator_faculty_id)
+    .bind(req.require_seating.unwrap_or(false))
     .fetch_one(db)
     .await
     .map_err(AppError::Database)?;
@@ -112,6 +128,24 @@ pub async fn generate_hall_tickets(
         .await
         .map_err(AppError::Database)?;
 
+        if exam.require_seating {
+            sqlx::query(
+                r#"
+                INSERT INTO seating_arrangements
+                    (exam_id, student_id, room_number, seat_number)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (exam_id, student_id) DO UPDATE SET room_number = $3, seat_number = $4
+                "#
+            )
+            .bind(exam_id)
+            .bind(student_id)
+            .bind(&hall_no)
+            .bind(&seat_no)
+            .execute(db)
+            .await
+            .map_err(AppError::Database)?;
+        }
+
         tickets.push(ticket);
     }
 
@@ -167,7 +201,7 @@ pub async fn enter_marks(
                   CAST(grace_marks_applied AS TEXT) AS grace_marks_applied,
                   revaluation_status,
                   CAST(revaluation_marks AS TEXT) AS revaluation_marks,
-                  entered_by_faculty_id, entered_at, soft_deleted
+                  entered_by_faculty_id, status, entered_at, soft_deleted
         "#,
     )
     .bind(claims.institution_id)
@@ -196,6 +230,94 @@ pub async fn enter_marks(
     Ok(marks)
 }
 
+/// Transaction-aware variant of enter_marks used by bulk_enter_marks
+/// so the entire batch is atomic (all-or-nothing).
+pub async fn enter_marks_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    bus: &EventBus,
+    claims: &Claims,
+    faculty_id: Uuid,
+    req: EnterMarksRequest,
+) -> Result<MarksRow, AppError> {
+    // Validate against exam max_marks within the same transaction
+    let max_marks: i32 = sqlx::query_scalar(
+        "SELECT max_marks FROM exams WHERE exam_id = $1 AND institution_id = $2"
+    )
+    .bind(req.exam_id)
+    .bind(claims.institution_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound("Exam not found".into()))?;
+
+    if req.obtained_marks < 0.0 || req.obtained_marks > max_marks as f64 {
+        return Err(AppError::UnprocessableEntity(
+            format!("Marks must be between 0 and {} (max)", max_marks)
+        ));
+    }
+
+    let marks = sqlx::query_as::<_, MarksRow>(
+        r#"
+        INSERT INTO marks
+            (marks_id, institution_id, exam_id, student_id, course_id,
+             obtained_marks, entered_by_faculty_id, entered_at)
+        VALUES
+            (gen_random_uuid(), $1, $2, $3, $4, $5, $6, NOW())
+        ON CONFLICT (exam_id, student_id, course_id)
+        DO UPDATE SET obtained_marks = $5, entered_by_faculty_id = $6,
+                      entered_at = NOW(), updated_at = NOW()
+        RETURNING marks_id, institution_id, exam_id, student_id, course_id,
+                  CAST(obtained_marks AS TEXT) AS obtained_marks,
+                  is_grace_marks,
+                  CAST(grace_marks_applied AS TEXT) AS grace_marks_applied,
+                  revaluation_status,
+                  CAST(revaluation_marks AS TEXT) AS revaluation_marks,
+                  entered_by_faculty_id, status, entered_at, soft_deleted
+        "#,
+    )
+    .bind(claims.institution_id)
+    .bind(req.exam_id)
+    .bind(req.student_id)
+    .bind(req.course_id)
+    .bind(req.obtained_marks)
+    .bind(faculty_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(AppError::Database)?;
+
+    // Publish event (fire-and-forget; doesn't affect transaction)
+    bus.publish(DomainEvent::MarksEntered(MarksEnteredPayload {
+        marks_id:       marks.marks_id,
+        exam_id:        req.exam_id,
+        student_id:     req.student_id,
+        course_id:      req.course_id,
+        obtained_marks: req.obtained_marks,
+        occurred_at:    Utc::now(),
+    }));
+
+    Ok(marks)
+}
+
+pub async fn publish_marks(
+    db: &PgPool,
+    claims: &Claims,
+    course_id: Uuid,
+    exam_id: Uuid,
+) -> Result<u64, AppError> {
+    // Only ExamAdmins or system admins should publish, but we assume authorization is done in handlers.
+    let res = sqlx::query(
+        "UPDATE marks SET status = 'Published', updated_at = NOW() WHERE exam_id = $1 AND course_id = $2 AND institution_id = $3"
+    )
+    .bind(exam_id)
+    .bind(course_id)
+    .bind(claims.institution_id)
+    .execute(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(res.rows_affected())
+}
+
 pub async fn process_result(
     db: &PgPool,
     bus: &EventBus,
@@ -203,12 +325,16 @@ pub async fn process_result(
     req: ProcessResultRequest,
 ) -> Result<ResultRow, AppError> {
     // Get all marks for this student in this semester
-    let marks_data: Vec<(f64, f64, f64)> = sqlx::query_as(
+    let marks_data_rows: Vec<(Uuid, f64, f64, f64, i32, Uuid, Uuid)> = sqlx::query_as(
         r#"
         SELECT
+            m.marks_id,
             CAST(m.obtained_marks AS float8) as obtained,
             CAST(e.max_marks AS float8) as max_m,
-            CAST(c.credits AS float8) as credits
+            CAST(c.credits AS float8) as credits,
+            e.min_marks,
+            c.course_id,
+            e.exam_id
         FROM marks m
         JOIN exams e ON e.exam_id = m.exam_id
         JOIN courses c ON c.course_id = m.course_id
@@ -225,7 +351,30 @@ pub async fn process_result(
     .await
     .map_err(AppError::Database)?;
 
-    let sgpa = compute_sgpa(&marks_data);
+    let mut processed_marks = Vec::new();
+    for (marks_id, mut obtained, max_m, credits, min_marks, course_id, _exam_id) in marks_data_rows {
+        if (obtained as i32) < min_marks {
+            // Check grace policy
+            let grace_policy = sqlx::query_as::<_, GracePolicy>(
+                "SELECT * FROM exam_grace_policies WHERE institution_id = $1 AND (course_id = $2 OR course_id IS NULL) ORDER BY course_id NULLS LAST LIMIT 1"
+            ).bind(claims.institution_id).bind(course_id).fetch_optional(db).await.map_err(AppError::Database)?;
+
+            if let Some(policy) = grace_policy {
+                if (obtained as i32) >= policy.min_original_marks {
+                    let needed = min_marks - (obtained as i32);
+                    if needed <= policy.max_grace_marks {
+                        obtained += needed as f64;
+                        sqlx::query(
+                            "UPDATE marks SET obtained_marks = $1, is_grace_marks = true, grace_marks_applied = $2 WHERE marks_id = $3"
+                        ).bind(obtained).bind(needed as f64).bind(marks_id).execute(db).await.map_err(AppError::Database)?;
+                    }
+                }
+            }
+        }
+        processed_marks.push((obtained, max_m, credits));
+    }
+
+    let sgpa = compute_sgpa(&processed_marks);
 
     // Get previous CGPA
     let prev_cgpa: Option<f64> = sqlx::query_scalar(
@@ -427,7 +576,7 @@ pub async fn request_revaluation(
                   CAST(grace_marks_applied AS TEXT) AS grace_marks_applied,
                   revaluation_status,
                   CAST(revaluation_marks AS TEXT) AS revaluation_marks,
-                  entered_by_faculty_id, entered_at, soft_deleted
+                  entered_by_faculty_id, status, entered_at, soft_deleted
            FROM marks WHERE marks_id = $1 AND institution_id = $2 AND soft_deleted = false"#
     )
     .bind(req.marks_id)
@@ -684,6 +833,7 @@ pub async fn get_student_marks(
             m.grace_marks_applied,
             m.revaluation_status,
             m.revaluation_marks,
+            m.status,
             e.exam_code,
             e.exam_type,
             e.max_marks,
@@ -716,6 +866,7 @@ pub async fn get_student_marks(
             "grace_marks_applied": grace.map(|g| g.to_string()),
             "revaluation_status": r.get::<String, _>("revaluation_status"),
             "revaluation_marks": rev.map(|rv| rv.to_string()),
+            "status": r.get::<String, _>("status"),
             "exam_code": r.get::<Option<String>, _>("exam_code"),
             "exam_type": r.get::<String, _>("exam_type"),
             "max_marks": r.get::<i32, _>("max_marks"),
@@ -728,3 +879,91 @@ pub async fn get_student_marks(
     Ok(list)
 }
 
+pub async fn create_grace_policy(
+    db: &PgPool,
+    claims: &Claims,
+    req: CreateGracePolicyRequest,
+) -> Result<GracePolicy, AppError> {
+    let policy = sqlx::query_as::<_, GracePolicy>(
+        r#"
+        INSERT INTO exam_grace_policies (policy_id, institution_id, course_id, max_grace_marks, min_original_marks)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4)
+        RETURNING *
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(req.course_id)
+    .bind(req.max_grace_marks)
+    .bind(req.min_original_marks)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(policy)
+}
+
+pub async fn schedule_supplementary_exam(
+    db: &PgPool,
+    claims: &Claims,
+    req: ScheduleSupplementaryExamRequest,
+) -> Result<SupplementaryExam, AppError> {
+    let exam = sqlx::query_as::<_, SupplementaryExam>(
+        r#"
+        INSERT INTO supplementary_exams (supp_exam_id, original_exam_id, student_id, scheduled_date, scheduled_time, status)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, 'Scheduled')
+        RETURNING *
+        "#
+    )
+    .bind(req.original_exam_id)
+    .bind(req.student_id)
+    .bind(req.scheduled_date)
+    .bind(req.scheduled_time)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(exam)
+}
+
+pub async fn apply_moderation(
+    db: &PgPool,
+    claims: &Claims,
+    req: ApplyModerationRequest,
+) -> Result<MarkModeration, AppError> {
+    // Get original marks
+    let original: f64 = sqlx::query_scalar("SELECT CAST(obtained_marks AS float8) FROM marks WHERE exam_id = $1 AND student_id = $2")
+        .bind(req.exam_id)
+        .bind(req.student_id)
+        .fetch_optional(db)
+        .await
+        .map_err(AppError::Database)?
+        .ok_or_else(|| AppError::NotFound("Marks not found".into()))?;
+
+    let mod_entry = sqlx::query_as::<_, MarkModeration>(
+        r#"
+        INSERT INTO mark_moderations (moderation_id, exam_id, student_id, original_marks, moderated_marks, reason, created_by)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
+        RETURNING *
+        "#
+    )
+    .bind(req.exam_id)
+    .bind(req.student_id)
+    .bind(original)
+    .bind(req.moderated_marks)
+    .bind(&req.reason)
+    .bind(claims.sub)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    // Update marks
+    sqlx::query("UPDATE marks SET obtained_marks = $1 WHERE exam_id = $2 AND student_id = $3")
+        .bind(req.moderated_marks)
+        .bind(req.exam_id)
+        .bind(req.student_id)
+        .execute(db)
+        .await
+        .map_err(AppError::Database)?;
+
+    Ok(mod_entry)
+}

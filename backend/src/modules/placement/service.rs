@@ -212,7 +212,8 @@ pub async fn list_applications(
             s.enrollment_number AS roll_number,
             a.applied_at,
             a.status,
-            a.rejection_reason
+            a.rejection_reason,
+            a.resume_url
         FROM placement_applications a
         JOIN placement_drives d ON d.drive_id = a.drive_id
         JOIN placement_companies c ON c.company_id = d.company_id
@@ -248,7 +249,8 @@ pub async fn get_my_applications(
             s.enrollment_number AS roll_number,
             a.applied_at,
             a.status,
-            a.rejection_reason
+            a.rejection_reason,
+            a.resume_url
         FROM placement_applications a
         JOIN placement_drives d ON d.drive_id = a.drive_id
         JOIN placement_companies c ON c.company_id = d.company_id
@@ -285,15 +287,16 @@ pub async fn apply_to_drive(
 
     let row = sqlx::query_as::<_, PlacementApplication>(
         r#"
-        INSERT INTO placement_applications (drive_id, student_id, institution_id)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (drive_id, student_id) DO UPDATE SET updated_at = NOW()
+        INSERT INTO placement_applications (drive_id, student_id, institution_id, resume_url)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (drive_id, student_id) DO UPDATE SET resume_url = EXCLUDED.resume_url, updated_at = NOW()
         RETURNING *
         "#
     )
     .bind(req.drive_id)
     .bind(req.student_id)
     .bind(institution_id)
+    .bind(&req.resume_url)
     .fetch_one(db)
     .await?;
     Ok(row)
@@ -625,5 +628,157 @@ pub async fn get_eligible_students(
     .await?;
 
     Ok(rows)
+}
+
+pub async fn schedule_interview(
+    db: &PgPool,
+    institution_id: Uuid,
+    req: ScheduleInterviewRequest,
+) -> Result<PlacementInterview> {
+    let row = sqlx::query_as::<_, PlacementInterview>(
+        r#"
+        INSERT INTO placement_interviews (interview_id, institution_id, application_id, round_name, scheduled_at, duration_minutes, location_or_url)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
+        RETURNING *
+        "#
+    )
+    .bind(institution_id)
+    .bind(req.application_id)
+    .bind(&req.round_name)
+    .bind(req.scheduled_at)
+    .bind(req.duration_minutes)
+    .bind(&req.location_or_url)
+    .fetch_one(db)
+    .await?;
+    Ok(row)
+}
+
+pub async fn list_interviews(
+    db: &PgPool,
+    institution_id: Uuid,
+) -> Result<Vec<PlacementInterview>> {
+    let rows = sqlx::query_as::<_, PlacementInterview>(
+        "SELECT * FROM placement_interviews WHERE institution_id = $1 ORDER BY scheduled_at DESC"
+    )
+    .bind(institution_id)
+    .fetch_all(db)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn update_interview_status(
+    db: &PgPool,
+    institution_id: Uuid,
+    interview_id: Uuid,
+    req: UpdateInterviewStatusRequest,
+) -> Result<PlacementInterview> {
+    let row = sqlx::query_as::<_, PlacementInterview>(
+        r#"
+        UPDATE placement_interviews
+        SET status = $1, updated_at = NOW()
+        WHERE interview_id = $2 AND institution_id = $3
+        RETURNING *
+        "#
+    )
+    .bind(&req.status)
+    .bind(interview_id)
+    .bind(institution_id)
+    .fetch_one(db)
+    .await?;
+    Ok(row)
+}
+
+pub async fn register_alumni_placement(
+    db: &PgPool,
+    institution_id: Uuid,
+    req: TrackAlumniPlacementRequest,
+) -> Result<AlumniPlacement> {
+    let row = sqlx::query_as::<_, AlumniPlacement>(
+        r#"
+        INSERT INTO alumni_placements (alumni_id, institution_id, student_id, company_name, designation, ctc_lpa, joining_date)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
+        RETURNING alumni_id, institution_id, student_id, company_name, designation, CAST(ctc_lpa AS TEXT) AS ctc_lpa, joining_date, created_at
+        "#
+    )
+    .bind(institution_id)
+    .bind(req.student_id)
+    .bind(&req.company_name)
+    .bind(&req.designation)
+    .bind(req.ctc_lpa)
+    .bind(req.joining_date)
+    .fetch_one(db)
+    .await?;
+    Ok(row)
+}
+
+pub async fn list_alumni_placements(
+    db: &PgPool,
+    institution_id: Uuid,
+) -> Result<Vec<AlumniPlacement>> {
+    let rows = sqlx::query_as::<_, AlumniPlacement>(
+        r#"
+        SELECT alumni_id, institution_id, student_id, company_name, designation, CAST(ctc_lpa AS TEXT) AS ctc_lpa, joining_date, created_at
+        FROM alumni_placements
+        WHERE institution_id = $1
+        ORDER BY created_at DESC
+        "#
+    )
+    .bind(institution_id)
+    .fetch_all(db)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn get_placement_analytics_stats(
+    db: &PgPool,
+    institution_id: Uuid,
+) -> Result<serde_json::Value> {
+    // Branch-wise stats
+    let branch_rows: Vec<(Option<String>, Option<i64>)> = sqlx::query_as(
+        r#"
+        SELECT b.branch_code, COUNT(o.offer_id)
+        FROM student_profiles sp
+        LEFT JOIN branches b ON sp.branch_id = b.branch_id
+        LEFT JOIN placement_offers o ON sp.student_id = o.student_id AND o.status = 'Accepted'
+        WHERE sp.institution_id = $1
+        GROUP BY b.branch_code
+        "#
+    )
+    .bind(institution_id)
+    .fetch_all(db)
+    .await?;
+
+    let mut branch_stats = serde_json::Map::new();
+    for (code, count) in branch_rows {
+        if let Some(c) = code {
+            branch_stats.insert(c, serde_json::Value::Number(count.unwrap_or(0).into()));
+        }
+    }
+
+    // YoY YoY package comparison
+    let yoy_rows: Vec<(Option<i32>, Option<f64>)> = sqlx::query_as(
+        r#"
+        SELECT EXTRACT(YEAR FROM o.offer_date)::int4 AS yr, AVG(o.package_lpa)::float8
+        FROM placement_offers o
+        WHERE o.institution_id = $1 AND o.status = 'Accepted'
+        GROUP BY yr
+        ORDER BY yr ASC
+        "#
+    )
+    .bind(institution_id)
+    .fetch_all(db)
+    .await?;
+
+    let mut yoy_stats = serde_json::Map::new();
+    for (yr, avg) in yoy_rows {
+        if let Some(y) = yr {
+            yoy_stats.insert(y.to_string(), serde_json::json!(avg.unwrap_or(0.0)));
+        }
+    }
+
+    Ok(serde_json::json!({
+        "branch_offers": branch_stats,
+        "yoy_package_avg": yoy_stats,
+    }))
 }
 

@@ -13,6 +13,7 @@ pub fn router() -> Router<AppState> {
         .route("/exams/:id/hall-tickets",               get(handlers::get_hall_tickets))
         .route("/marks",                                post(handlers::enter_marks))
         .route("/marks/bulk",                           post(handlers::bulk_enter_marks))
+        .route("/marks/publish",                        post(handlers::publish_marks))
         .route("/results/process",                      post(handlers::process_result))
         .route("/results/:result_id/publish",           patch(handlers::publish_result))
         .route("/results/:student_id",                  get(handlers::get_student_results))
@@ -22,6 +23,9 @@ pub fn router() -> Router<AppState> {
         .route("/revaluation",                          get(handlers::list_revaluations))
         .route("/revaluation/:id/approve",              patch(handlers::approve_revaluation))
         .route("/marks/student/:student_id",            get(handlers::get_student_marks))
+        .route("/grace-policies",                       post(handlers::create_grace_policy))
+        .route("/supplementary-exams",                  post(handlers::schedule_supplementary_exam))
+        .route("/moderation",                           post(handlers::apply_moderation))
 }
 
 

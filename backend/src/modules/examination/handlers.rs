@@ -2,11 +2,7 @@ use axum::{extract::{Path, Query, State}, Extension, Json};
 use serde_json::json;
 use serde::Deserialize;
 use uuid::Uuid;
-use crate::{error::AppError, middleware::auth::Claims, modules::examination::{models::*, service}, state::AppState};
-
-fn ok<T: serde::Serialize>(data: T) -> Json<serde_json::Value> {
-    Json(json!({ "success": true, "data": data, "meta": { "timestamp": chrono::Utc::now() } }))
-}
+use crate::{error::AppError, middleware::auth::Claims, modules::examination::{models::*, service}, response::ok, state::AppState};
 
 #[derive(Deserialize)] pub struct ResultQuery { pub semester: Option<i32> }
 
@@ -50,17 +46,37 @@ pub async fn bulk_enter_marks(
     State(s): State<AppState>, Extension(c): Extension<Claims>,
     Json(b): Json<BulkMarksRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    // Begin a transaction so bulk mark entry is all-or-nothing.
+    // If any single entry fails (e.g. duplicate, bad exam_id), the whole batch rolls back.
+    let mut tx = s.db.begin().await.map_err(AppError::Database)?;
+
     let mut results = vec![];
     for entry in b.entries {
-        let r = service::enter_marks(&s.db, &s.bus, &c, c.sub, EnterMarksRequest {
-            exam_id: b.exam_id,
-            student_id: entry.student_id,
-            course_id: b.course_id,
+        let r = service::enter_marks_in_tx(&mut tx, &s.bus, &c, c.sub, EnterMarksRequest {
+            exam_id:        b.exam_id,
+            student_id:     entry.student_id,
+            course_id:      b.course_id,
             obtained_marks: entry.obtained_marks,
         }).await?;
         results.push(r);
     }
+
+    tx.commit().await.map_err(AppError::Database)?;
     Ok(ok(results))
+}
+
+#[derive(Deserialize)]
+pub struct PublishMarksRequest {
+    pub exam_id: Uuid,
+    pub course_id: Uuid,
+}
+
+pub async fn publish_marks(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Json(b): Json<PublishMarksRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let affected = service::publish_marks(&s.db, &c, b.course_id, b.exam_id).await?;
+    Ok(ok(json!({ "published_count": affected })))
 }
 
 pub async fn process_result(
@@ -124,11 +140,31 @@ pub async fn list_revaluations(
 
 pub async fn approve_revaluation(
     State(s): State<AppState>, Extension(c): Extension<Claims>,
-    Path(id): Path<Uuid>,
-    Json(b): Json<ApproveRevaluationRequest>,
+    Path(id): Path<Uuid>, Json(b): Json<ApproveRevaluationRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     service::approve_revaluation(&s.db, &s.bus, &c, id, b).await?;
     Ok(ok(json!({ "success": true })))
+}
+
+pub async fn create_grace_policy(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Json(b): Json<CreateGracePolicyRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::create_grace_policy(&s.db, &c, b).await?))
+}
+
+pub async fn schedule_supplementary_exam(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Json(b): Json<ScheduleSupplementaryExamRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::schedule_supplementary_exam(&s.db, &c, b).await?))
+}
+
+pub async fn apply_moderation(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Json(b): Json<ApplyModerationRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::apply_moderation(&s.db, &c, b).await?))
 }
 
 pub async fn get_student_marks(

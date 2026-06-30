@@ -8,22 +8,18 @@ use crate::{
     error::AppError,
     middleware::auth::Claims,
     modules::student::{models::*, service},
+    response::ok,
     state::AppState,
 };
+use validator::Validate;
 
-fn ok<T: serde::Serialize>(data: T) -> Json<serde_json::Value> {
-    Json(json!({
-        "success": true,
-        "data": data,
-        "meta": { "timestamp": chrono::Utc::now() }
-    }))
-}
 
 pub async fn create_student(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Json(body): Json<CreateStudentRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    body.validate().map_err(|e| AppError::Validation(e.to_string()))?;
     let student = service::create_student(&state.db, &state.bus, &claims, body).await?;
     Ok(ok(student))
 }
@@ -89,8 +85,58 @@ pub async fn update_student(
     Path(student_id): Path<Uuid>,
     Json(body): Json<UpdateStudentRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    body.validate().map_err(|e| AppError::Validation(e.to_string()))?;
     let updated = service::update_student(&state.db, &state.bus, &claims, student_id, body).await?;
     Ok(ok(updated))
+}
+
+
+
+pub async fn upload_document(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(student_id): Path<Uuid>,
+    mut multipart: axum::extract::Multipart,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let mut file_data = Vec::new();
+    let mut doc_type = String::new();
+    let mut file_name = String::new();
+
+    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
+        let name = field.name().unwrap_or("").to_string();
+        if name == "document_type" {
+            doc_type = field.text().await.unwrap_or_default();
+        } else if name == "file" {
+            file_name = field.file_name().unwrap_or("unknown").to_string();
+            let data = field.bytes().await.map_err(|_| AppError::BadRequest("Failed to read file".into()))?;
+            file_data = data.to_vec();
+        }
+    }
+
+    if doc_type.is_empty() || file_data.is_empty() {
+        return Err(AppError::BadRequest("document_type and file are required".into()));
+    }
+
+    let doc = service::upload_document(&state.db, &claims, student_id, &doc_type, &file_name, &file_data).await?;
+    Ok(ok(doc))
+}
+
+pub async fn bulk_import_students(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(body): Json<BulkImportRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let imported = service::bulk_import_students(&state.db, &state.bus, &claims, body.students).await?;
+    Ok(ok(json!({ "imported": imported })))
+}
+
+pub async fn generate_transfer_certificate(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(student_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let tc_data = service::generate_transfer_certificate(&state.db, &claims, student_id).await?;
+    Ok(ok(tc_data))
 }
 
 pub async fn delete_student(
@@ -139,4 +185,24 @@ pub async fn get_enrollment_status(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let (sp, _) = service::get_student(&state.db, &claims, student_id).await?;
     Ok(ok(json!({ "student_id": student_id, "status": sp.enrollment_status })))
+}
+
+pub async fn get_me(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let (sp, p) = service::get_student_by_user_id(&state.db, claims.sub, claims.institution_id).await?;
+    Ok(ok(StudentResponse {
+        student_id: sp.student_id, person: p,
+        enrollment_number: sp.enrollment_number,
+        enrollment_status: sp.enrollment_status,
+        enrollment_date: sp.enrollment_date,
+        branch_id: sp.branch_id,
+        current_semester: sp.current_semester,
+        category: sp.category, quota: sp.quota,
+        cgpa: sp.cgpa,
+        guardian_name: sp.guardian_name,
+        guardian_phone: sp.guardian_phone,
+        created_at: sp.created_at,
+    }))
 }

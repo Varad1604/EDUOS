@@ -44,19 +44,20 @@ export default function Exams() {
   const [duration, setDuration] = useState(180);
   const [maxMarks, setMaxMarks] = useState(100);
   const [minMarks, setMinMarks] = useState(35);
+  const [requireSeating, setRequireSeating] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
   const fetchExams = () => {
     setLoading(true);
-    examinationApi.exams.list().then(r => setExams(r.data.data ?? [])).catch(() => {}).finally(() => setLoading(false));
+    examinationApi.exams.list().then(r => setExams(r.data.data ?? [])).catch(err => console.warn('Request failed:', err)).finally(() => setLoading(false));
   };
 
   useEffect(() => {
     fetchExams();
     if (can('exams.schedule')) {
-      academicsApi.courses.list().then(r => setCourses(r.data.data ?? [])).catch(() => {});
-      academicsApi.classes.list().then(r => setClasses(r.data.data ?? [])).catch(() => {});
+      academicsApi.courses.list().then(r => setCourses(r.data.data ?? [])).catch(err => console.warn('Request failed:', err));
+      academicsApi.classes.list().then(r => setClasses(r.data.data ?? [])).catch(err => console.warn('Request failed:', err));
     }
   }, []);
 
@@ -69,8 +70,9 @@ export default function Exams() {
       exam_code: examCode || null, course_id: courseId, class_id: classId, exam_type: examType,
       scheduled_date: scheduledDate, scheduled_time: scheduledTime + ':00',
       duration_minutes: duration, exam_mode: 'Written', max_marks: maxMarks, min_marks: minMarks,
+      require_seating: requireSeating,
     })
-      .then(() => { setShowAddModal(false); setExamCode(''); setMessage('Exam scheduled successfully!'); fetchExams(); })
+      .then(() => { setShowAddModal(false); setExamCode(''); setRequireSeating(false); setMessage('Exam scheduled successfully!'); fetchExams(); })
       .catch((err: unknown) => {
         const e = err as { response?: { data?: { errors?: { message?: string }[] } } };
         setError(e.response?.data?.errors?.[0]?.message || 'Failed to schedule exam');
@@ -197,6 +199,10 @@ export default function Exams() {
                   <input type="number" className="form-input" value={minMarks} onChange={e => setMinMarks(parseInt(e.target.value))} />
                 </div>
               </div>
+              <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input type="checkbox" id="requireSeating" checked={requireSeating} onChange={e => setRequireSeating(e.target.checked)} />
+                <label htmlFor="requireSeating" className="form-label" style={{ margin: 0 }}>Require Seating Arrangement (Hall Tickets)</label>
+              </div>
               <button className="btn btn-primary" type="submit">Publish Exam Schedule</button>
             </form>
           </div>
@@ -291,7 +297,24 @@ export default function Exams() {
                       </td>
                       {can('exams.enterMarks') && (
                         <td>
-                          <button className="btn btn-secondary btn-sm" onClick={() => handleOpenMarksEntry(e)}>Enter Marks</button>
+                          <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <button className="btn btn-secondary btn-sm" onClick={() => handleOpenMarksEntry(e)}>Enter Marks</button>
+                            {can('exams.schedule') && (
+                              <button className="btn btn-primary btn-sm" onClick={async () => {
+                                if (window.confirm('Are you sure you want to publish marks for this exam? Once published, they become visible to students.')) {
+                                  try {
+                                    const targetCourse = courses.find(c => c.course_code === e.course_code);
+                                    if (!targetCourse) throw new Error('Course not found');
+                                    await examinationApi.marks.publish({ exam_id: e.exam_id, course_id: targetCourse.course_id });
+                                    setMessage(`Marks published successfully for ${e.exam_code ?? e.course_name}`);
+                                    setTimeout(() => setMessage(''), 3000);
+                                  } catch (err: any) {
+                                    setError(err?.response?.data?.errors?.[0]?.message || 'Failed to publish marks');
+                                  }
+                                }
+                              }}>Publish Marks</button>
+                            )}
+                          </div>
                         </td>
                       )}
                     </tr>

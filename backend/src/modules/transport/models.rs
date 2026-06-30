@@ -60,6 +60,32 @@ pub struct TransportAllocation {
     pub updated_at:       DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct TransportDriver {
+    pub driver_id:           Uuid,
+    pub institution_id:      Uuid,
+    pub name:                String,
+    pub license_number:      String,
+    pub contact_number:      String,
+    pub assigned_vehicle_id: Option<Uuid>,
+    pub created_at:          DateTime<Utc>,
+    pub updated_at:          DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct TransportTripLog {
+    pub log_id:              Uuid,
+    pub institution_id:      Uuid,
+    pub route_id:            Uuid,
+    pub vehicle_id:          Uuid,
+    pub driver_id:           Option<Uuid>,
+    pub departure_time:      Option<DateTime<Utc>>,
+    pub arrival_time:        Option<DateTime<Utc>>,
+    pub status:              String,
+    pub created_at:          DateTime<Utc>,
+    pub updated_at:          DateTime<Utc>,
+}
+
 // ── Request/Response types ───────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Validate)]
@@ -119,4 +145,24 @@ pub struct TransportAllocationResponse {
     pub end_date:         Option<NaiveDate>,
     pub status:           String,
     pub fare_amount:      String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateDriverRequest {
+    pub name:                String,
+    pub license_number:      String,
+    pub contact_number:      String,
+    pub assigned_vehicle_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateTripLogRequest {
+    pub route_id:            Uuid,
+    pub vehicle_id:          Uuid,
+    pub driver_id:           Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateTripStatusRequest {
+    pub status:              String,
 }

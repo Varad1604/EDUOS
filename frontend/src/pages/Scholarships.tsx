@@ -31,19 +31,19 @@ export default function Scholarships() {
   const fetchScholarships = () => {
     setLoading(true);
     financeApi.scholarships.list()
-      .then(r => setScholarships(r.data.data ?? [])).catch(() => {}).finally(() => setLoading(false));
+      .then(r => setScholarships(r.data.data ?? [])).catch(err => console.warn('Request failed:', err)).finally(() => setLoading(false));
   };
 
   useEffect(() => {
     fetchScholarships();
-    if (can('scholarships.allocate')) {
-      studentsApi.list({ limit: 100 }).then(r => setStudents(r.data.data ?? [])).catch(() => {});
+    if (can('fees.create') && !isStudent) {
+      studentsApi.list({ limit: 100 }).then(r => setStudents(r.data.data ?? [])).catch(err => console.warn('Request failed:', err));
     }
   }, []);
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!can('scholarships.create')) return;
+    if (!can('fees.create')) return;
     setError(''); setMessage('');
     if (!name) { setError('Scholarship name is required'); return; }
     financeApi.scholarships.create({
@@ -61,7 +61,7 @@ export default function Scholarships() {
 
   const handleAllotSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!showAllotModal || !can('scholarships.allocate')) return;
+    if (!showAllotModal || !can('fees.create')) return;
     setError(''); setMessage('');
     financeApi.scholarships.allocate(showAllotModal.scholarship_id, {
       student_id: selectedStudentId, amount: parseFloat(allotAmount.toString()),
@@ -75,7 +75,7 @@ export default function Scholarships() {
 
   // Student sees only their own scholarships (simplified — shows all schemes with read-only view)
   // Faculty block
-  if (!can('scholarships.viewAll') && !can('scholarships.viewOwn')) {
+  if (!can('fees.read')) {
     return (
       <>
         <Header title="Scholarships" subtitle="Access denied" />
@@ -99,7 +99,7 @@ export default function Scholarships() {
             <h1>{isStudent ? 'Available Scholarships' : 'Financial Aid & Scholarships'}</h1>
             <p>{isStudent ? 'View eligibility criteria and your allotted scholarships' : 'Create schemes and award grants to eligible students'}</p>
           </div>
-          {can('scholarships.create') && (
+          {can('fees.create') && !isStudent && (
             <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>+ Configure Scholarship</button>
           )}
         </div>
@@ -115,7 +115,7 @@ export default function Scholarships() {
         {error && <div className="login-error" style={{ marginBottom: '1.5rem' }}>{error}</div>}
 
         {/* Create scheme modal — Principal / Registrar / FeeManager */}
-        {can('scholarships.create') && showAddModal && (
+        {can('fees.create') && !isStudent && showAddModal && (
           <div className="card" style={{ marginBottom: '1.5rem', maxWidth: 500, border: '1px solid var(--accent-primary)' }}>
             <div className="card-header">
               <h3>Create Scholarship Scheme</h3>
@@ -151,7 +151,7 @@ export default function Scholarships() {
         )}
 
         {/* Award modal — Principal / Registrar / FeeManager */}
-        {can('scholarships.allocate') && showAllotModal && (
+        {can('fees.create') && !isStudent && showAllotModal && (
           <div className="card" style={{ marginBottom: '1.5rem', maxWidth: 500, border: '1px solid var(--accent-success)' }}>
             <div className="card-header">
               <h3>Award: {showAllotModal.scholarship_name}</h3>
@@ -195,7 +195,7 @@ export default function Scholarships() {
                   <tr>
                     <th>Scheme Name</th><th>Type</th><th>Grant Amount</th>
                     <th>Min CGPA</th><th>Year</th>
-                    {can('scholarships.allocate') && <th>Actions</th>}
+                    {can('fees.create') && !isStudent && <th>Actions</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -206,7 +206,7 @@ export default function Scholarships() {
                       <td style={{ fontWeight: 600 }}>₹{s.amount ? parseFloat(s.amount).toLocaleString() : '—'}</td>
                       <td>{s.eligibility_criteria?.min_cgpa ?? '—'}</td>
                       <td>{s.academic_year ?? '—'}</td>
-                      {can('scholarships.allocate') && (
+                      {can('fees.create') && !isStudent && (
                         <td>
                           <button className="btn btn-secondary btn-sm"
                             onClick={() => { setAllotAmount(s.amount ? parseFloat(s.amount) : 10000); setShowAllotModal(s); }}>

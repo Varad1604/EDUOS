@@ -1,11 +1,7 @@
 use axum::{extract::{Path, Query, State}, Extension, Json};
 use serde_json::json;
 use uuid::Uuid;
-use crate::{error::AppError, middleware::auth::Claims, modules::finance::{models::*, service}, state::AppState};
-
-fn ok<T: serde::Serialize>(data: T) -> Json<serde_json::Value> {
-    Json(json!({ "success": true, "data": data, "meta": { "timestamp": chrono::Utc::now() } }))
-}
+use crate::{error::AppError, middleware::auth::Claims, modules::finance::{models::*, service}, response::ok, state::AppState};
 
 // ── Fee Structures ────────────────────────────────────────────────────────────
 pub async fn create_fee_structure(
@@ -52,6 +48,13 @@ pub async fn initiate_payment(
     Json(b): Json<InitiatePaymentRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     Ok(ok(service::initiate_payment(&s.db, &s.bus, &c, b).await?))
+}
+
+pub async fn verify_razorpay(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Json(b): Json<service::VerifyRazorpayRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::verify_razorpay_payment(&s.db, &s.bus, &c, b).await?))
 }
 
 pub async fn get_payments(
@@ -287,3 +290,64 @@ pub async fn audit_logs(
     Ok(ok(logs))
 }
 
+pub async fn get_fee_collection_trend(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::get_fee_collection_trend(&s.db, &c).await?))
+}
+
+pub async fn create_fiscal_year(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Json(b): Json<CreateFiscalYearRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::create_fiscal_year(&s.db, &c, b).await?))
+}
+
+pub async fn lock_fiscal_year(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Path(fiscal_year_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::lock_fiscal_year(&s.db, &c, fiscal_year_id).await?))
+}
+
+pub async fn upload_bank_statement(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Json(b): Json<UploadBankStatementRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::upload_bank_statement(&s.db, &c, b).await?))
+}
+
+pub async fn create_late_fee_policy(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Json(b): Json<CreateLateFeePolicyRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::create_late_fee_policy(&s.db, &c, b).await?))
+}
+
+pub async fn apply_late_fees(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let count = service::apply_late_fees(&s.db, &c).await?;
+    Ok(ok(json!({ "allocations_updated": count })))
+}
+
+pub async fn create_installment_plan(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Json(b): Json<CreateInstallmentPlanRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::create_installment_plan(&s.db, &c, b).await?))
+}
+
+pub async fn request_fee_waiver(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Json(b): Json<CreateFeeWaiverRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::request_fee_waiver(&s.db, &c, b).await?))
+}
+
+pub async fn approve_fee_waiver(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Path(waiver_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::approve_fee_waiver(&s.db, &c, waiver_id).await?))
+}

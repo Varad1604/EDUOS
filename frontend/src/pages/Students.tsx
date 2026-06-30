@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import Header from '../components/Header';
-import { studentsApi } from '../api';
+import { studentsApi, api } from '../api';
 import { usePermissions } from '../hooks/usePermissions';
 
 interface Student {
@@ -11,7 +11,7 @@ interface Student {
   branch_id?: string;
   current_semester?: number;
   cgpa?: string;
-  person: { first_name: string; last_name?: string; phone?: string; email?: string; };
+  person: { person_id: string; first_name: string; last_name?: string; phone?: string; email?: string; };
 }
 
 const STATUS_BADGE: Record<string, string> = {
@@ -26,16 +26,9 @@ function MyProfile() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    studentsApi.list({ limit: 200 })
-      .then(r => {
-        const list: Student[] = r.data.data ?? [];
-        const found = list.find(s =>
-          s.person.email?.toLowerCase().includes(user?.username?.toLowerCase() ?? '') ||
-          s.person.first_name?.toLowerCase() === user?.username?.toLowerCase()
-        );
-        setMe(found ?? null);
-      })
-      .catch(() => {})
+    studentsApi.getMyProfile()
+      .then(r => setMe(r.data?.data ?? null))
+      .catch(err => console.warn('Request failed:', err))
       .finally(() => setLoading(false));
   }, [user?.username]);
 
@@ -100,7 +93,7 @@ function MyProfile() {
 
 // Staff: Full student list with role-controlled actions
 function StudentList() {
-  const { can, user } = usePermissions();
+  const { can, user, isStudent } = usePermissions();
   const [students, setStudents] = useState<Student[]>([]);
   const [total, setTotal]       = useState(0);
   const [page, setPage]         = useState(1);
@@ -112,6 +105,11 @@ function StudentList() {
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [studentToDelete, setStudentToDelete] = useState<Student | null>(null);
 
+  const [isEditing, setIsEditing] = useState(false);
+  const [editForm, setEditForm] = useState<Student | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editError, setEditError] = useState('');
+
   const TABS = ['All','Active','Applicant','Detained','Alumni','Dropout'];
 
   useEffect(() => {
@@ -121,14 +119,14 @@ function StudentList() {
         setStudents(r.data.data ?? []);
         setTotal(r.data.meta?.pagination?.total ?? 0);
       })
-      .catch(() => {})
+      .catch(err => console.warn('Request failed:', err))
       .finally(() => setLoading(false));
   }, [page, statusFilter, search]);
 
   const handleTabChange = (t: string) => { setTab(t); setStatusFilter(t === 'All' ? '' : t); setPage(1); };
   
   const handleStatusChange = async (id: string, newStatus: string) => {
-    if (!can('students.edit')) return;
+    if (!can('students.update')) return;
     await studentsApi.setStatus(id, { enrollment_status: newStatus });
     setStudents(prev => prev.map(s => s.student_id === id ? { ...s, enrollment_status: newStatus } : s));
   };
@@ -142,6 +140,43 @@ function StudentList() {
       setStudentToDelete(null);
     } catch (err) {
       alert('Failed to delete student record.');
+    }
+  };
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editForm || !can('students.update')) return;
+    setEditLoading(true);
+    setEditError('');
+    try {
+      await studentsApi.update(editForm.student_id, {
+        first_name: editForm.person.first_name,
+        last_name: editForm.person.last_name || null,
+        email: editForm.person.email || null,
+        phone: editForm.person.phone || null,
+        branch_id: editForm.branch_id || null,
+        current_semester: editForm.current_semester || null,
+      });
+      // Handle status if changed
+      if (selectedStudent && selectedStudent.enrollment_status !== editForm.enrollment_status) {
+        await studentsApi.setStatus(editForm.student_id, { new_status: editForm.enrollment_status, reason: 'Profile Edit' });
+      }
+      setStudents(prev => prev.map(s => s.student_id === editForm.student_id ? editForm : s));
+      setSelectedStudent(editForm);
+      setIsEditing(false);
+    } catch (err: any) {
+      setEditError(err?.response?.data?.errors?.[0]?.message ?? 'Failed to update student details');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  const handleGenerateTC = async (studentId: string) => {
+    try {
+      const res = await api.post(`/students/${studentId}/tc`);
+      alert(`Transfer Certificate Generated:\nNo: ${res.data.data.certificate_no}\nDate: ${res.data.data.issue_date}\nReason: ${res.data.data.leaving_reason}`);
+    } catch (err: any) {
+      alert(err?.response?.data?.errors?.[0]?.message ?? 'Failed to generate TC');
     }
   };
 
@@ -182,10 +217,15 @@ function StudentList() {
   const handleEnrollSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!can('students.create')) return;
+    const instId = user?.institution_id;
+    if (!instId) {
+      setEnrollError('No active institution context found.');
+      return;
+    }
     setEnrollError(''); setEnrollLoading(true);
     try {
       await studentsApi.create({
-        institution_id: user?.institution_id || '550e8400-e29b-41d4-a716-446655440000',
+        institution_id: instId,
         person: {
           first_name: enrollForm.first_name, last_name: enrollForm.last_name || null,
           email: enrollForm.email || null, phone: enrollForm.phone || null,
@@ -207,6 +247,50 @@ function StudentList() {
     } finally { setEnrollLoading(false); }
   };
 
+  const [showBulkImportModal, setShowBulkImportModal] = React.useState(false);
+  const [bulkImportLoading, setBulkImportLoading] = React.useState(false);
+  const [bulkImportError, setBulkImportError] = React.useState('');
+  
+  const handleBulkImport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!can('students.create')) return;
+    const fileInput = (e.target as HTMLFormElement).elements.namedItem('file') as HTMLInputElement;
+    const file = fileInput.files?.[0];
+    if (!file) return;
+
+    setBulkImportLoading(true); setBulkImportError('');
+    try {
+      const text = await file.text();
+      const lines = text.split('\n').filter(l => l.trim().length > 0);
+      const headers = lines[0].split(',').map(h => h.trim());
+      
+      const studentsToImport = lines.slice(1).map(line => {
+        const values = line.split(',').map(v => v.trim());
+        const data: any = {};
+        headers.forEach((h, i) => { data[h] = values[i]; });
+        return {
+          first_name: data['First Name'],
+          last_name: data['Last Name'] || null,
+          email: data['Email'] || null,
+          phone: data['Phone'] || null,
+          enrollment_number: data['Enrollment Number'] || null,
+        };
+      });
+
+      await api.post('/students/bulk-import', { students: studentsToImport });
+      setShowBulkImportModal(false);
+      
+      setLoading(true);
+      studentsApi.list({ page: 1, limit: 20 })
+        .then(r => { setStudents(r.data.data ?? []); setTotal(r.data.meta?.pagination?.total ?? 0); setPage(1); })
+        .finally(() => setLoading(false));
+    } catch (err: any) {
+      setBulkImportError('Bulk import failed. Please check CSV format.');
+    } finally {
+      setBulkImportLoading(false);
+    }
+  };
+
   return (
     <>
       <div className="page-header">
@@ -215,7 +299,10 @@ function StudentList() {
           <p>{total.toLocaleString()} total records</p>
         </div>
         {can('students.create') && (
-          <button id="add-student-btn" className="btn btn-primary" onClick={() => setShowEnrollModal(true)}>Enroll Student</button>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button className="btn btn-secondary" onClick={() => setShowBulkImportModal(true)}>Bulk Import</button>
+            <button id="add-student-btn" className="btn btn-primary" onClick={() => setShowEnrollModal(true)}>Enroll Student</button>
+          </div>
         )}
       </div>
 
@@ -281,60 +368,118 @@ function StudentList() {
 
       {/* Student Detail Modal */}
       {selectedStudent && (
-        <div className="modal-overlay" onClick={() => setSelectedStudent(null)}>
+        <div className="modal-overlay" onClick={() => { setSelectedStudent(null); setIsEditing(false); }}>
           <div className="modal" style={{ maxWidth: 560 }} onClick={e => e.stopPropagation()}>
-            <h2>Student Details</h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <span className="form-label">First Name</span>
-                  <div className="form-input" style={{ background: 'var(--color-surface-2)' }}>{selectedStudent.person.first_name}</div>
-                </div>
-                <div>
-                  <span className="form-label">Last Name</span>
-                  <div className="form-input" style={{ background: 'var(--color-surface-2)' }}>{selectedStudent.person.last_name || '—'}</div>
-                </div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <span className="form-label">Email Address</span>
-                  <div className="form-input" style={{ background: 'var(--color-surface-2)', wordBreak: 'break-all' }}>{selectedStudent.person.email || '—'}</div>
-                </div>
-                <div>
-                  <span className="form-label">Phone Number</span>
-                  <div className="form-input" style={{ background: 'var(--color-surface-2)' }}>{selectedStudent.person.phone || '—'}</div>
-                </div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <span className="form-label">Enrollment Number</span>
-                  <div className="form-input" style={{ background: 'var(--color-surface-2)' }}>{selectedStudent.enrollment_number || '—'}</div>
-                </div>
-                <div>
-                  <span className="form-label">Current Semester</span>
-                  <div className="form-input" style={{ background: 'var(--color-surface-2)' }}>Semester {selectedStudent.current_semester || '—'}</div>
-                </div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <span className="form-label">Branch ID</span>
-                  <div className="form-input" style={{ background: 'var(--color-surface-2)' }}>{selectedStudent.branch_id || '—'}</div>
-                </div>
-                <div>
-                  <span className="form-label">Enrollment Status</span>
-                  <div className="form-input" style={{ background: 'var(--color-surface-2)' }}>{selectedStudent.enrollment_status}</div>
-                </div>
-              </div>
-              {selectedStudent.cgpa && (
-                <div>
-                  <span className="form-label">Cumulative GPA (CGPA)</span>
-                  <div className="form-input" style={{ background: 'var(--color-surface-2)', fontWeight: 'bold', color: 'var(--color-success)' }}>{selectedStudent.cgpa}</div>
-                </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h2>{isEditing ? 'Edit Student Details' : 'Student Details'}</h2>
+              {can('students.update') && !isEditing && (
+                <button className="btn btn-secondary btn-sm" onClick={() => { setEditForm(selectedStudent); setIsEditing(true); }}>Edit Profile</button>
               )}
-              <div style={{ display: 'flex', gap: 10, marginTop: 12, justifyContent: 'flex-end' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setSelectedStudent(null)}>Close</button>
-              </div>
             </div>
+            
+            {editError && <div className="login-error" style={{ marginBottom: 16 }}>{editError}</div>}
+            
+            {isEditing ? (
+              <form onSubmit={handleEditSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div className="form-group">
+                    <label className="form-label">First Name *</label>
+                    <input className="form-input" required value={editForm?.person.first_name || ''} onChange={e => setEditForm(p => p ? { ...p, person: { ...p.person, first_name: e.target.value } } : null)} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Last Name</label>
+                    <input className="form-input" value={editForm?.person.last_name || ''} onChange={e => setEditForm(p => p ? { ...p, person: { ...p.person, last_name: e.target.value } } : null)} />
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div className="form-group">
+                    <label className="form-label">Email</label>
+                    <input className="form-input" type="email" value={editForm?.person.email || ''} onChange={e => setEditForm(p => p ? { ...p, person: { ...p.person, email: e.target.value } } : null)} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Phone</label>
+                    <input className="form-input" value={editForm?.person.phone || ''} onChange={e => setEditForm(p => p ? { ...p, person: { ...p.person, phone: e.target.value } } : null)} />
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div className="form-group">
+                    <label className="form-label">Enrollment Number</label>
+                    <input className="form-input" value={editForm?.enrollment_number || ''} onChange={e => setEditForm(p => p ? { ...p, enrollment_number: e.target.value } : null)} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Semester</label>
+                    <select className="form-select" value={editForm?.current_semester || ''} onChange={e => setEditForm(p => p ? { ...p, current_semester: parseInt(e.target.value) || undefined } : null)}>
+                      {[1,2,3,4,5,6,7,8].map(s => <option key={s} value={s}>Semester {s}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div className="form-group">
+                    <label className="form-label">Enrollment Status</label>
+                    <select className="form-select" value={editForm?.enrollment_status || ''} onChange={e => setEditForm(p => p ? { ...p, enrollment_status: e.target.value } : null)}>
+                      {['Active','Admitted','Applicant','Detained','Alumni','Dropout'].map(s => <option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginTop: 12, justifyContent: 'flex-end' }}>
+                  <button type="submit" className="btn btn-primary" disabled={editLoading}>{editLoading ? 'Saving...' : 'Save Changes'}</button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setIsEditing(false)}>Cancel</button>
+                </div>
+              </form>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <span className="form-label">First Name</span>
+                    <div className="form-input" style={{ background: 'var(--color-surface-2)' }}>{selectedStudent.person.first_name}</div>
+                  </div>
+                  <div>
+                    <span className="form-label">Last Name</span>
+                    <div className="form-input" style={{ background: 'var(--color-surface-2)' }}>{selectedStudent.person.last_name || '—'}</div>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <span className="form-label">Email Address</span>
+                    <div className="form-input" style={{ background: 'var(--color-surface-2)', wordBreak: 'break-all' }}>{selectedStudent.person.email || '—'}</div>
+                  </div>
+                  <div>
+                    <span className="form-label">Phone Number</span>
+                    <div className="form-input" style={{ background: 'var(--color-surface-2)' }}>{selectedStudent.person.phone || '—'}</div>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <span className="form-label">Enrollment Number</span>
+                    <div className="form-input" style={{ background: 'var(--color-surface-2)' }}>{selectedStudent.enrollment_number || '—'}</div>
+                  </div>
+                  <div>
+                    <span className="form-label">Current Semester</span>
+                    <div className="form-input" style={{ background: 'var(--color-surface-2)' }}>Semester {selectedStudent.current_semester || '—'}</div>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <span className="form-label">Branch</span>
+                    <div className="form-input" style={{ background: 'var(--color-surface-2)' }}>Computer Science (CSE)</div>
+                  </div>
+                  <div>
+                    <span className="form-label">Enrollment Status</span>
+                    <div className="form-input" style={{ background: 'var(--color-surface-2)' }}>{selectedStudent.enrollment_status}</div>
+                  </div>
+                </div>
+                {selectedStudent.cgpa && (
+                  <div>
+                    <span className="form-label">Cumulative GPA (CGPA)</span>
+                    <div className="form-input" style={{ background: 'var(--color-surface-2)', fontWeight: 'bold', color: 'var(--color-success)' }}>{selectedStudent.cgpa}</div>
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 10, marginTop: 12, justifyContent: 'space-between' }}>
+                  <button type="button" className="btn btn-secondary" onClick={() => handleGenerateTC(selectedStudent.student_id)}>Generate TC</button>
+                  <button type="button" className="btn btn-secondary" onClick={() => { setSelectedStudent(null); setIsEditing(false); }}>Close</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -363,7 +508,7 @@ function StudentList() {
             <input className="form-input" placeholder="Search by name, enrollment number…" style={{ maxWidth: 340 }}
               value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
           </div>
-          {can('students.viewAll') && <button className="btn btn-secondary btn-sm" onClick={handleExport}>Export CSV</button>}
+          {!isStudent && can('students.read') && <button className="btn btn-secondary btn-sm" onClick={handleExport}>Export CSV</button>}
         </div>
 
         {loading ? (
@@ -388,7 +533,7 @@ function StudentList() {
                 <tr>
                   <th>Student</th><th>Enrollment No.</th><th>Semester</th>
                   <th>Status</th><th>CGPA</th><th>Contact</th>
-                  {can('students.edit') && <th>Actions</th>}
+                  {can('students.update') && <th>Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -401,7 +546,7 @@ function StudentList() {
                         </div>
                         <div>
                           <div style={{ fontWeight: 600 }}>{s.person.first_name} {s.person.last_name ?? ''}</div>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{s.person.email ?? s.student_id.slice(0, 8) + '…'}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{s.person.email ?? '—'}</div>
                         </div>
                       </div>
                     </td>
@@ -410,11 +555,11 @@ function StudentList() {
                     <td><span className={`badge ${STATUS_BADGE[s.enrollment_status] ?? 'badge-muted'}`}>{s.enrollment_status}</span></td>
                     <td>{s.cgpa ? <strong style={{ color: parseFloat(s.cgpa) >= 7.5 ? 'var(--color-success)' : 'var(--accent-warning)' }}>{s.cgpa}</strong> : '—'}</td>
                     <td style={{ fontSize: '0.8rem' }}>{s.person.phone ?? s.person.email ?? '—'}</td>
-                    {can('students.edit') && (
+                    {can('students.update') && (
                       <td>
                         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                           <button className="btn btn-secondary btn-sm" onClick={() => setSelectedStudent(s)}>View</button>
-                          {can('students.edit') && (
+                          {can('students.update') && (
                             <select
                               className="form-select"
                               style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', height: 'auto', minWidth: 110 }}
@@ -443,6 +588,30 @@ function StudentList() {
           </div>
         )}
       </div>
+      {showBulkImportModal && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2>Bulk Import Students</h2>
+              <button className="btn-close" onClick={() => setShowBulkImportModal(false)}>×</button>
+            </div>
+            {bulkImportError && <div className="alert alert-error">{bulkImportError}</div>}
+            <form onSubmit={handleBulkImport}>
+              <div className="form-group">
+                <label>CSV File</label>
+                <input type="file" name="file" accept=".csv" className="form-control" required />
+                <small>CSV must have headers: First Name, Last Name, Email, Phone, Enrollment Number</small>
+              </div>
+              <div className="modal-footer" style={{ marginTop: '1rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowBulkImportModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={bulkImportLoading}>
+                  {bulkImportLoading ? 'Importing...' : 'Import'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -451,7 +620,7 @@ function StudentList() {
 export default function Students() {
   const { can, isStudent } = usePermissions();
 
-  if (!can('students.viewAll') && !can('students.viewOwn')) {
+  if (!can('students.read')) {
     return (
       <>
         <Header title="Students" subtitle="Access denied" />

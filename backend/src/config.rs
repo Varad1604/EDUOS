@@ -28,6 +28,8 @@ pub struct DatabaseConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct RedisConfig {
     pub url: String,
+    pub pool_max_size: usize,
+    pub pool_timeout_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -44,30 +46,6 @@ pub struct SecurityConfig {
 
 impl AppConfig {
     pub fn load() -> Result<Self> {
-        let cfg = config::Config::builder()
-            // Database
-            .set_default("database.max_connections", 20)?
-            .set_default("database.min_connections", 2)?
-            // Server
-            .set_default("server.host", "127.0.0.1")?
-            .set_default("server.port", 8000)?
-            .set_default("server.request_timeout_secs", 30)?
-            .set_default("server.max_body_size_mb", 50)?
-            // JWT
-            .set_default("jwt.access_expiry_minutes", 15)?
-            .set_default("jwt.refresh_expiry_days", 7)?
-            // Security
-            .set_default("security.allowed_origins", Vec::<String>::new())?
-            // Load from env
-            .add_source(
-                config::Environment::default()
-                    .separator("_")
-                    .try_parsing(true),
-            )
-            .build()
-            .context("Failed to build config")?;
-
-        // Manual env overrides that the config crate might not pick up cleanly
         let server = ServerConfig {
             host: std::env::var("SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
             port: std::env::var("SERVER_PORT")
@@ -98,10 +76,23 @@ impl AppConfig {
 
         let redis = RedisConfig {
             url: std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".into()),
+            pool_max_size: std::env::var("REDIS_POOL_MAX_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(20),
+            pool_timeout_secs: std::env::var("REDIS_POOL_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5),
         };
 
+        let jwt_secret = std::env::var("JWT_SECRET").context("JWT_SECRET must be set")?;
+        if jwt_secret.len() < 32 {
+            anyhow::bail!("JWT_SECRET must be at least 32 characters long for security. Got {} chars.", jwt_secret.len());
+        }
+
         let jwt = JwtConfig {
-            secret: std::env::var("JWT_SECRET").context("JWT_SECRET must be set")?,
+            secret: jwt_secret,
             access_expiry_minutes: std::env::var("JWT_ACCESS_EXPIRY_MINUTES")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -121,9 +112,6 @@ impl AppConfig {
             .collect();
 
         let security = SecurityConfig { allowed_origins };
-
-        // Try deserializing the rest from config crate, or just return our manually built one
-        let _ = cfg; // config crate builder used only for defaults fallback
 
         Ok(AppConfig { server, database, redis, jwt, security })
     }

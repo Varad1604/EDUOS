@@ -15,12 +15,14 @@ use tower_http::{
 use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+mod audit;
 mod config;
 mod db;
 mod error;
 mod events;
 mod middleware;
 mod modules;
+mod response;
 mod state;
 
 use crate::{config::AppConfig, state::AppState};
@@ -73,7 +75,8 @@ fn build_router(state: AppState, config: &AppConfig) -> Router {
         ])
         .allow_credentials(true)
         .allow_origin(if allowed_origins.is_empty() {
-            AllowOrigin::any()
+            warn!("ALLOWED_ORIGINS not set — CORS restricted to http://localhost:5200 (dev default)");
+            AllowOrigin::list(vec!["http://localhost:5200".parse().expect("hardcoded URL is valid")])
         } else {
             AllowOrigin::list(allowed_origins)
         });
@@ -110,6 +113,7 @@ fn build_router(state: AppState, config: &AppConfig) -> Router {
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
+                .layer(tower::limit::ConcurrencyLimitLayer::new(100))
                 .layer(TimeoutLayer::new(Duration::from_secs(
                     config.server.request_timeout_secs,
                 )))

@@ -36,6 +36,41 @@ pub struct BookTransaction {
     pub updated_at:       DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct BookReservation {
+    pub reservation_id:   Uuid,
+    pub institution_id:   Uuid,
+    pub student_id:       Uuid,
+    pub book_id:          Uuid,
+    pub status:           String,
+    pub reserved_at:      DateTime<Utc>,
+    pub updated_at:       DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct Periodical {
+    pub periodical_id:    Uuid,
+    pub institution_id:   Uuid,
+    pub title:            String,
+    pub publisher:        Option<String>,
+    pub frequency:        Option<String>,
+    pub category:         Option<String>,
+    pub total_copies:     i32,
+    pub available_copies: i32,
+    pub created_at:       DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct LibraryFine {
+    pub fine_id:           Uuid,
+    pub institution_id:    Uuid,
+    pub transaction_id:    Uuid,
+    pub student_id:        Uuid,
+    pub amount:            String, // NUMERIC(10,2) cast to TEXT
+    pub fee_allocation_id: Option<Uuid>,
+    pub created_at:        DateTime<Utc>,
+}
+
 // ── Request/Response types ───────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Validate)]
@@ -62,6 +97,20 @@ pub struct IssueBookRequest {
 #[allow(dead_code)]
 pub struct ReturnBookRequest {
     pub transaction_id:   Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreatePeriodicalRequest {
+    pub title:            String,
+    pub publisher:        Option<String>,
+    pub frequency:        Option<String>,
+    pub category:         Option<String>,
+    pub total_copies:     i32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateReservationRequest {
+    pub book_id:          Uuid,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]

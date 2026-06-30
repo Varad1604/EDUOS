@@ -2,42 +2,14 @@ use uuid::Uuid;
 use chrono::Utc;
 use sqlx::PgPool;
 use serde_json::json;
+use chrono::Datelike;
 use crate::{
+    audit::log_event,
     error::AppError,
     events::{bus::EventBus, types::*},
     middleware::auth::Claims,
     modules::student::models::*,
 };
-
-/// Log an event to the immutable event_log table.
-pub async fn log_event(
-    db: &PgPool,
-    institution_id: Uuid,
-    user_id: Uuid,
-    event_type: &str,
-    aggregate_id: Uuid,
-    aggregate_type: &str,
-    payload: serde_json::Value,
-) -> Result<(), AppError> {
-    sqlx::query(
-        r#"
-        INSERT INTO event_log
-            (event_id, institution_id, event_type, aggregate_id, aggregate_type, user_id, event_payload, event_version)
-        VALUES
-            (gen_random_uuid(), $1, $2, $3, $4, $5, $6, 1)
-        "#,
-    )
-    .bind(institution_id)
-    .bind(event_type)
-    .bind(aggregate_id)
-    .bind(aggregate_type)
-    .bind(user_id)
-    .bind(payload)
-    .execute(db)
-    .await
-    .map_err(AppError::Database)?;
-    Ok(())
-}
 
 pub async fn create_student(
     db: &PgPool,
@@ -72,6 +44,7 @@ pub async fn create_student(
     .map_err(AppError::Database)?;
 
     // 2. Create StudentProfile
+    let status = req.enrollment_status.as_deref().unwrap_or("Applicant");
     let student = sqlx::query_as::<_, StudentProfile>(
         r#"
         INSERT INTO student_profiles
@@ -79,7 +52,7 @@ pub async fn create_student(
              enrollment_status, enrollment_date, branch_id, current_semester,
              current_academic_year, category, quota, guardian_name,
              guardian_phone, guardian_relation)
-        VALUES ($1,$2,$3,$4,'Applicant',$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
         RETURNING student_id, person_id, institution_id, enrollment_number,
                   enrollment_status, enrollment_date, branch_id, current_semester,
                   current_academic_year, CAST(cgpa AS TEXT) AS cgpa, category, quota,
@@ -91,6 +64,7 @@ pub async fn create_student(
     .bind(person_id)
     .bind(claims.institution_id)
     .bind(&req.enrollment_number)
+    .bind(status)
     .bind(req.enrollment_date)
     .bind(req.branch_id)
     .bind(req.current_semester)
@@ -126,19 +100,20 @@ pub async fn create_student(
     let payload = json!({
         "student_id": student_id,
         "person_id": person_id,
-        "enrollment_status": "Applicant",
+        "enrollment_status": status,
     });
     log_event(db, claims.institution_id, claims.sub, "StudentCreated", student_id, "Student", payload).await?;
     bus.publish(DomainEvent::StudentCreated(StudentCreatedPayload {
         student_id,
         institution_id: claims.institution_id,
         person_id,
-        enrollment_status: "Applicant".into(),
+        enrollment_status: status.to_string(),
         occurred_at: Utc::now(),
     }));
 
     Ok(student)
 }
+
 
 pub async fn get_student(
     db: &PgPool,
@@ -178,6 +153,8 @@ pub async fn list_students(
     let semester_filter: Option<i32> = query.semester;
     let search_pattern = query.search.as_deref().map(|s| format!("%{}%", s));
 
+    let filter_branch = if claims.branch_id.is_some() { claims.branch_id } else { query.branch_id };
+
     let total: i64 = sqlx::query_scalar(
         r#"
         SELECT COUNT(*)
@@ -195,7 +172,7 @@ pub async fn list_students(
     .bind(claims.institution_id)
     .bind(query.status.as_deref())
     .bind(semester_filter)
-    .bind(query.branch_id)
+    .bind(filter_branch)
     .bind(query.academic_year)
     .bind(search_pattern.as_deref())
     .fetch_one(db)
@@ -225,7 +202,7 @@ pub async fn list_students(
     .bind(claims.institution_id)
     .bind(query.status.as_deref())
     .bind(semester_filter)
-    .bind(query.branch_id)
+    .bind(filter_branch)
     .bind(query.academic_year)
     .bind(search_pattern.as_deref())
     .bind(limit)
@@ -443,4 +420,118 @@ pub async fn get_academic_records(
     .await
     .map_err(AppError::Database)?;
     Ok(records)
+}
+
+pub async fn get_student_by_user_id(
+    db: &PgPool,
+    user_id: Uuid,
+    institution_id: Uuid,
+) -> Result<(StudentProfile, Person), AppError> {
+    let person_id: Uuid = sqlx::query_scalar(
+        "SELECT person_id FROM users WHERE user_id = $1 AND institution_id = $2 AND is_active = true"
+    )
+    .bind(user_id)
+    .bind(institution_id)
+    .fetch_optional(db)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound(format!("User {} not found", user_id)))?;
+
+    let student = sqlx::query_as::<_, StudentProfile>(
+        "SELECT student_id, person_id, institution_id, enrollment_number, enrollment_status, enrollment_date, branch_id, current_semester, current_academic_year, CAST(cgpa AS TEXT) AS cgpa, category, quota, guardian_name, guardian_phone, guardian_relation, created_at, updated_at, soft_deleted FROM student_profiles WHERE person_id = $1 AND institution_id = $2 AND soft_deleted = false"
+    )
+    .bind(person_id)
+    .bind(institution_id)
+    .fetch_optional(db)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound(format!("Student profile for user {} not found", user_id)))?;
+
+    let person = sqlx::query_as::<_, Person>(
+        "SELECT * FROM persons WHERE person_id = $1 AND soft_deleted = false"
+    )
+    .bind(person_id)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok((student, person))
+}
+
+pub async fn upload_document(
+    db: &PgPool,
+    claims: &Claims,
+    student_id: Uuid,
+    document_type: &str,
+    file_name: &str,
+    file_data: &[u8],
+) -> Result<StudentDocument, AppError> {
+    // Basic file write (for MVP)
+    let upload_dir = "uploads";
+    std::fs::create_dir_all(upload_dir).map_err(|_| AppError::Internal(anyhow::anyhow!("Cannot create uploads dir")))?;
+    
+    let file_id = Uuid::new_v4();
+    let safe_name = file_name.replace(" ", "_");
+    let file_path = format!("{}/{}_{}", upload_dir, file_id, safe_name);
+    
+    std::fs::write(&file_path, file_data).map_err(|_| AppError::Internal(anyhow::anyhow!("Failed to save file")))?;
+    
+    let doc = sqlx::query_as::<_, StudentDocument>(
+        r#"
+        INSERT INTO student_documents (document_id, student_id, document_type, file_url, file_name, file_size_bytes)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING document_id, student_id, document_type, file_url, file_name, upload_date, version_number, soft_deleted
+        "#,
+    )
+    .bind(file_id)
+    .bind(student_id)
+    .bind(document_type)
+    .bind(&file_path)
+    .bind(file_name)
+    .bind(file_data.len() as i64)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(doc)
+}
+
+pub async fn bulk_import_students(
+    db: &PgPool,
+    bus: &EventBus,
+    claims: &Claims,
+    students: Vec<CreateStudentRequest>,
+) -> Result<usize, AppError> {
+    let mut imported = 0;
+    // Transaction could be used here, but for simplicity we'll just loop and use create_student
+    for req in students {
+        if let Ok(_) = create_student(db, bus, claims, req).await {
+            imported += 1;
+        }
+    }
+    Ok(imported)
+}
+
+pub async fn generate_transfer_certificate(
+    db: &PgPool,
+    claims: &Claims,
+    student_id: Uuid,
+) -> Result<serde_json::Value, AppError> {
+    let (sp, p) = get_student(db, claims, student_id).await?;
+    
+    // In a real system, this would generate a PDF. We return JSON metadata for frontend rendering.
+    let tc_data = json!({
+        "certificate_no": format!("TC-{}-{}", chrono::Utc::now().year(), rand::random::<u16>()),
+        "issue_date": chrono::Utc::now().to_rfc3339(),
+        "student_name": format!("{} {}", p.first_name, p.last_name.unwrap_or_default()).trim(),
+        "enrollment_number": sp.enrollment_number.unwrap_or_default(),
+        "guardian_name": sp.guardian_name.unwrap_or_default(),
+        "leaving_reason": "Course Completion",
+        "conduct": "Good"
+    });
+    
+    // Log TC generation
+    log_event(db, claims.institution_id, claims.sub, "TCGenerated", student_id, "Student", tc_data.clone()).await?;
+    
+    Ok(tc_data)
 }

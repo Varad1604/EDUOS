@@ -50,6 +50,9 @@ eduOS/
 | **Redis** | 6379 | localhost:6379 |
 
 > EduOS frontend is **pinned to port 5200** — it will never clash with other Vite projects on 5173.
+> 
+> ⚠️ **Port Note:** PostgreSQL is mapped to **5432** (not 5433). If you have WSL2 with a native postgres
+> running on 5433, using 5432 ensures Docker's postgres is always reached correctly.
 
 ---
 
@@ -118,8 +121,11 @@ eduos-redis      Up X seconds (healthy)
 In the same terminal (still in `eduOS/`):
 
 ```powershell
-cargo run --package eduos-backend
+.\start-backend.ps1
 ```
+
+> 💡 This script loads all environment variables from `.env` then runs the backend.
+> **Do NOT use bare `cargo run`** — it will fail because `.env` isn't auto-loaded in PowerShell.
 
 **First run:** Will compile all Rust dependencies (~2–3 minutes). Grab a coffee ☕
 
@@ -171,7 +177,7 @@ You will see the **EduOS Login Page**. Enter:
 |-------|-------|
 | Institution ID | `550e8400-e29b-41d4-a716-446655440000` |
 | Username | `admin` |
-| Password | `password123` |
+| Password | `Password@123` |
 
 Click **Sign In** → You will land on the Dashboard. 🎉
 
@@ -210,8 +216,8 @@ netstat -ano | findstr ":8000"
 # Kill it using the PID shown in the last column (replace XXXX)
 taskkill /PID XXXX /F
 
-# Then try cargo run again
-cargo run --package eduos-backend
+# Then try again
+.\start-backend.ps1
 ```
 
 ---
@@ -228,8 +234,8 @@ docker ps --filter "name=eduos"
 # 3. If containers are not there, start them
 docker-compose up -d postgres redis
 
-# 4. Wait for (healthy) status, then rerun
-cargo run --package eduos-backend
+# 4. Wait for (healthy) status, then rerun the backend
+.\start-backend.ps1
 ```
 
 ---
@@ -264,7 +270,7 @@ The default credentials are seeded automatically on first boot. If you wiped the
 ```
 Institution ID: 550e8400-e29b-41d4-a716-446655440000
 Username:       admin
-Password:       password123
+Password:       Password@123
 ```
 
 ---
@@ -285,7 +291,7 @@ Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 |------|-------|
 | **Institution ID** | `550e8400-e29b-41d4-a716-446655440000` |
 | **Admin username** | `admin` |
-| **Admin password** | `password123` |
+| **Admin password** | `Password@123` |
 | **DB host** | `localhost:5432` |
 | **DB name** | `eduos_dev` |
 | **DB user** | `eduos` |
@@ -305,7 +311,7 @@ curl http://localhost:8000/api/v1/health
 # Login and get a token
 curl -X POST http://localhost:8000/api/v1/auth/login `
   -H "Content-Type: application/json" `
-  -d '{"institution_id":"550e8400-e29b-41d4-a716-446655440000","username":"admin","password":"password123"}'
+  -d '{"institution_id":"550e8400-e29b-41d4-a716-446655440000","username":"admin","password":"Password@123"}'
 ```
 
 You should get back a `{"success": true, "data": {"access_token": "..."}}` response.
@@ -320,11 +326,11 @@ You should get back a `{"success": true, "data": {"access_token": "..."}}` respo
 │                                                                 │
 │  1. Open Docker Desktop  (wait for green icon)                  │
 │  2. docker-compose up -d postgres redis   (wait for healthy)    │
-│  3. cargo run --package eduos-backend     (Terminal 1)          │
+│  3. .\start-backend.ps1                  (Terminal 1)          │
 │  4. cd frontend && npm run dev            (Terminal 2)          │
 │  5. Open http://localhost:5200            (Browser)             │
 │                                                                 │
-│  LOGIN:  admin / password123                                    │
+│  LOGIN:  admin / Password@123                                   │
 │  INST:   550e8400-e29b-41d4-a716-446655440000                  │
 └─────────────────────────────────────────────────────────────────┘
 ```

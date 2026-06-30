@@ -1,6 +1,8 @@
+import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store';
 import { usePermissions } from '../hooks/usePermissions';
+import { hostelApi, transportApi } from '../api';
 
 interface NavItem {
   label: string;
@@ -10,28 +12,32 @@ interface NavItem {
 
 const NAV: { section: string; items: NavItem[] }[] = [
   { section: 'Overview', items: [
-    { label: 'Dashboard',    path: '/' },
+    { label: 'Dashboard',     path: '/' },
+    { label: 'Notifications', path: '/notifications' },
   ]},
   { section: 'Academics', items: [
-    { label: 'Students',     path: '/students',    permission: 'students.viewAll OR students.viewOwn' },
-    { label: 'Courses',      path: '/courses',     permission: 'courses.viewAll OR courses.viewOwn' },
-    { label: 'Timetable',    path: '/timetable',   permission: 'timetable.view' },
-    { label: 'Attendance',   path: '/attendance',  permission: 'attendance.mark OR attendance.viewAll OR attendance.viewOwn' },
-    { label: 'Library',      path: '/library',     permission: 'library.manage OR library.viewOwn' },
-    { label: 'Hostel',       path: '/hostel',      permission: 'hostel.manage OR hostel.viewOwn' },
-    { label: 'Transport',    path: '/transport',   permission: 'transport.manage OR transport.viewOwn' },
+    { label: 'Students',     path: '/students',    permission: 'students.read' },
+    { label: 'Faculty',      path: '/faculty',     permission: 'courses.read' },
+    { label: 'Courses',      path: '/courses',     permission: 'courses.read' },
+    { label: 'Quizzes',      path: '/quizzes',     permission: 'courses.read' },
+    { label: 'Timetable',    path: '/timetable',   permission: 'courses.read' },
+    { label: 'Attendance',   path: '/attendance',  permission: 'attendance.read OR attendance.create' },
+    { label: 'Leave',        path: '/leave',       permission: 'attendance.read OR attendance.create' },
+    { label: 'Library',      path: '/library',     permission: 'library.manage OR library.view' },
+    { label: 'Hostel',       path: '/hostel',      permission: 'hostel.manage OR hostel.view' },
+    { label: 'Transport',    path: '/transport',   permission: 'transport.manage OR transport.view' },
   ]},
   { section: 'Examinations', items: [
-    { label: 'Exams',        path: '/exams',        permission: 'exams.schedule OR exams.viewAll' },
-    { label: 'Hall Tickets', path: '/hall-tickets', permission: 'halltickets.generate OR halltickets.viewOwn' },
-    { label: 'Results',      path: '/results',      permission: 'results.viewAll OR results.viewOwn' },
+    { label: 'Exams',        path: '/exams',        permission: 'exams.create OR exams.read' },
+    { label: 'Hall Tickets', path: '/hall-tickets', permission: 'exams.create OR exams.read' },
+    { label: 'Results',      path: '/results',      permission: 'marks.read' },
   ]},
   { section: 'Finance', items: [
-    { label: 'Fees',         path: '/fees',         permission: 'fees.viewAll OR fees.viewOwn' },
-    { label: 'Scholarships', path: '/scholarships', permission: 'scholarships.viewAll OR scholarships.viewOwn' },
-    { label: 'Accounts',     path: '/accounts',     permission: 'accounts.viewAll' },
-    { label: 'Reports',      path: '/reports',      permission: 'reports.view' },
-    { label: 'Audit Logs',   path: '/audit-logs',   permission: 'reports.view' },
+    { label: 'Fees',         path: '/fees',         permission: 'fees.read' },
+    { label: 'Scholarships', path: '/scholarships', permission: 'fees.read' },
+    { label: 'Accounts',     path: '/accounts',     permission: 'accounts.read' },
+    { label: 'Reports',      path: '/reports',      permission: 'reports.read' },
+    { label: 'Audit Logs',   path: '/audit-logs',   permission: 'reports.read' },
   ]},
   { section: 'Campus Life', items: [
     { label: 'Placement',    path: '/placement',    permission: 'placement.manage OR placement.apply OR placement.view' },
@@ -73,6 +79,15 @@ function SidebarIcon({ label }: { label: string }) {
           <path d="M16 3.13a4 4 0 0 1 0 7.75" />
         </svg>
       );
+    case 'Faculty':
+      return (
+        <svg {...props}>
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      );
     case 'Courses':
       return (
         <svg {...props}>
@@ -94,6 +109,15 @@ function SidebarIcon({ label }: { label: string }) {
         <svg {...props}>
           <polyline points="9 11 12 14 22 4" />
           <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+        </svg>
+      );
+    case 'Leave':
+      return (
+        <svg {...props}>
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+          <line x1="16" y1="2" x2="16" y2="6" />
+          <line x1="8" y1="2" x2="8" y2="6" />
+          <line x1="3" y1="10" x2="21" y2="10" />
         </svg>
       );
     case 'Library':
@@ -195,6 +219,20 @@ function SidebarIcon({ label }: { label: string }) {
           <line x1="8" y1="12" x2="16" y2="12" />
         </svg>
       );
+    case 'Quizzes':
+      return (
+        <svg {...props}>
+          <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z" />
+          <path d="M9 12l2 2 4-4" />
+        </svg>
+      );
+    case 'Notifications':
+      return (
+        <svg {...props}>
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+          <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+        </svg>
+      );
     default:
       return (
         <svg {...props}>
@@ -206,12 +244,46 @@ function SidebarIcon({ label }: { label: string }) {
 
 export default function Sidebar() {
   const { user, clearAuth } = useAuthStore();
-  const { granted, role, isAdmin } = usePermissions();
+  const { granted, role, isAdmin, isStudent } = usePermissions();
   const nav = useNavigate();
   const loc = useLocation();
 
+  const [hasHostel, setHasHostel] = useState(true);
+  const [hasTransport, setHasTransport] = useState(true);
+
+  useEffect(() => {
+    if (isStudent && user?.user_id) {
+      setHasHostel(false);
+      setHasTransport(false);
+
+      Promise.all([
+        hostelApi.allocations.listStudent(user.user_id)
+          .then(res => {
+            const list = res.data?.data ?? [];
+            if (list.some((a: any) => a.status === 'Active')) {
+              setHasHostel(true);
+            }
+          })
+          .catch(() => {}),
+        transportApi.allocations.listStudent(user.user_id)
+          .then(res => {
+            const list = res.data?.data ?? [];
+            if (list.some((a: any) => a.status === 'Active')) {
+              setHasTransport(true);
+            }
+          })
+          .catch(() => {})
+      ]);
+    }
+  }, [role, user?.user_id, isStudent]);
+
   const isVisible = (item: NavItem): boolean => {
     if (item.path === '/audit-logs') return isAdmin;
+    if (item.path === '/faculty' && isStudent) return false;
+    if (isStudent) {
+      if (item.path === '/hostel') return hasHostel;
+      if (item.path === '/transport') return hasTransport;
+    }
     if (!item.permission) return true;
     return item.permission.split(' OR ').some(p => granted.includes(p as never));
   };
@@ -245,7 +317,7 @@ export default function Sidebar() {
           <div key={section.section} className="sidebar-section">
             <div className="sidebar-section-label">{section.section}</div>
             {section.items.map(item => (
-              <div
+              <button
                 key={item.path}
                 id={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
                 className={`sidebar-item ${isActive(item.path) ? 'active' : ''}`}
@@ -253,7 +325,7 @@ export default function Sidebar() {
               >
                 <SidebarIcon label={item.label} />
                 {item.label}
-              </div>
+              </button>
             ))}
           </div>
         ))}

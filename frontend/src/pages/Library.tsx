@@ -32,6 +32,7 @@ interface Loan {
 interface Student {
   student_id: string;
   person: {
+    person_id: string;
     first_name: string;
     last_name: string;
     email?: string;
@@ -110,25 +111,19 @@ export default function Library() {
     if (!isStudent || !user?.user_id) return;
     setLoadingLoans(true);
     
-    // In our system, the student has a student profile student_id which is different from user user_id.
-    // Let's resolve the student_id first from their profile, or let the API handle matching by logged-in claims.
-    // Let's fetch student profile info from studentsApi list or use a helper to get own student profile.
-    studentsApi.list()
+    studentsApi.getMyProfile()
       .then(r => {
-        const studentList = r.data.data ?? [];
-        // Match the student profile whose first name/email matches.
-        const ownStudent = studentList.find((s: Student) => s.person?.email === user?.username);
-        const sid = ownStudent?.student_id || user?.user_id; // Fallback to user user_id if not found
-        
-        libraryApi.loans.listStudent(sid)
-          .then(r2 => setLoans(r2.data.data ?? []))
-          .catch(() => {});
+        const sid = r.data?.data?.student_id;
+        if (!sid) throw new Error("No student ID found");
+        return libraryApi.loans.listStudent(sid);
       })
-      .catch(() => {
-        // If we can't list all students, try fetching by user.user_id directly
+      .then(r2 => setLoans(r2.data?.data ?? []))
+      .catch(err => {
+        console.warn('Request failed:', err);
+        // Fallback
         libraryApi.loans.listStudent(user?.user_id ?? '')
-          .then(r => setLoans(r.data.data ?? []))
-          .catch(() => {});
+          .then(r => setLoans(r.data?.data ?? []))
+          .catch(e => console.warn('Fallback request failed:', e));
       })
       .finally(() => setLoadingLoans(false));
   };
@@ -138,7 +133,7 @@ export default function Library() {
     setLoadingStudents(true);
     studentsApi.list({ limit: 100 })
       .then(r => setStudents(r.data.data ?? []))
-      .catch(() => {})
+      .catch(err => console.warn('Request failed:', err))
       .finally(() => setLoadingStudents(false));
   };
 
@@ -213,6 +208,39 @@ export default function Library() {
         showAlert(err.response?.data?.error || 'Failed to return book');
       });
   };
+  const handleReserveBook = async (bookId: string) => {
+    try {
+      await libraryApi.books.reserve({ book_id: bookId });
+      showAlert('Book reserved successfully. You will be notified when it is available.', false);
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { errors?: { message?: string }[] } } };
+      showAlert(e.response?.data?.errors?.[0]?.message || 'Failed to reserve book');
+    }
+  };
+
+  const handleSendReminders = async () => {
+    if (!window.confirm('Send overdue reminders to students? This will also auto-bill fines.')) return;
+    try {
+      const res = await libraryApi.reminders.send();
+      showAlert(`Reminders sent and fines generated for ${res.data.data.reminders_sent} overdue items.`, false);
+    } catch (err) {
+      showAlert('Failed to send reminders');
+    }
+  };
+
+  const handleCreatePeriodical = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await libraryApi.periodicals.create({
+        title: 'New Periodical',
+        frequency: 'Monthly',
+        total_copies: 5
+      });
+      showAlert('Periodical created (Simulated from UI)', false);
+    } catch (err) {
+      showAlert('Failed to create periodical');
+    }
+  };
 
   // Filters
   const filteredBooks = books.filter(b => 
@@ -232,14 +260,14 @@ export default function Library() {
 
   return (
     <>
-      <Header 
-        title="Library Management" 
-        subtitle={isStudent ? "Search books and view your borrowed log" : "Track inventory registry, loan desk transactions and fines"} 
-      />
+      <Header title="Library Management" subtitle="Manage books, periodicals, issues, and fine integration" />
       <div className="page fade-in">
-        
-        {/* Banner Alert messages */}
-        {error && (
+        {can('library.manage') && (
+          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginBottom: '1.5rem' }}>
+            <button className="btn btn-secondary" onClick={handleSendReminders}>Send Overdue Reminders</button>
+            <button className="btn btn-secondary" onClick={handleCreatePeriodical}>+ Periodical</button>
+          </div>
+        )}{error && (
           <div className="alert alert-danger" style={{ padding: '0.85rem 1.25rem', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--accent-danger)', borderRadius: 'var(--radius-sm)', marginBottom: '1.5rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <span>⚠️</span>
             <span>{error}</span>
@@ -328,6 +356,11 @@ export default function Library() {
                       </div>
                       <h3 style={{ margin: '0.5rem 0 0.25rem 0', color: 'var(--text-primary)' }}>{book.title}</h3>
                       <p style={{ margin: '0 0 1rem 0', fontStyle: 'italic', fontSize: '0.9rem' }}>by {book.author}</p>
+                      {!isAvailable && isStudent && (
+                        <button className="btn btn-secondary btn-sm" onClick={() => handleReserveBook(book.book_id)} style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}>
+                          ⏳ Reserve Book
+                        </button>
+                      )}
                     </div>
                     <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between' }}>
                       <span>ISBN: <strong>{book.isbn}</strong></span>
@@ -546,6 +579,7 @@ export default function Library() {
                     </tr>
                   ) : filteredLoans.map(loan => {
                     const isOverdue = loan.status === 'Issued' && new Date(loan.due_date) < new Date();
+                    const outstanding = parseFloat(loan.fine_amount);
                     return (
                       <tr key={loan.transaction_id} style={{ borderBottom: '1px solid var(--border)', transition: 'all 0.1s' }} className="table-row-hover">
                         <td style={{ padding: '0.75rem' }}>
@@ -573,11 +607,12 @@ export default function Library() {
                           </span>
                         </td>
                         <td style={{ padding: '0.75rem' }}>
-                          {parseFloat(loan.fine_amount) > 0 ? (
-                            <strong style={{ color: 'var(--accent-danger)' }}>INR {parseFloat(loan.fine_amount).toFixed(2)}</strong>
-                          ) : (
-                            <span style={{ color: 'var(--text-muted)' }}>—</span>
-                          )}
+                                {outstanding > 0 ? (
+                                  <>
+                                    <span style={{ color: 'var(--accent-danger)' }}>₹{outstanding}</span>
+                                    {loan.status === 'Returned' && <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>(Auto-billed to Fee Account)</div>}
+                                  </>
+                                ) : '—'}
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'right' }}>
                           {loan.status !== 'Returned' && (

@@ -12,16 +12,6 @@ interface Account {
   fiscal_year: number;
 }
 
-interface BalanceSheetData {
-  assets: Account[];
-  liabilities: Account[];
-  equity: Account[];
-}
-
-interface IncomeStatementData {
-  income: Account[];
-  expenses: Account[];
-}
 
 interface JournalItem {
   item_id: string;
@@ -45,9 +35,7 @@ interface JournalEntry {
 }
 
 export default function Reports() {
-  const [activeTab, setActiveTab] = useState<'balanceSheet' | 'incomeStatement' | 'trialBalance' | 'ledgerJournals' | 'auditorCheck'>('balanceSheet');
-  const [balanceSheet, setBalanceSheet] = useState<BalanceSheetData>({ assets: [], liabilities: [], equity: [] });
-  const [incomeStatement, setIncomeStatement] = useState<IncomeStatementData>({ income: [], expenses: [] });
+  const [activeTab, setActiveTab] = useState<'balanceSheet' | 'incomeStatement' | 'trialBalance' | 'ledgerJournals' | 'customReport' | 'auditorCheck'>('balanceSheet');
   const [accountsList, setAccountsList] = useState<Account[]>([]);
   const [journalsList, setJournalsList] = useState<JournalEntry[]>([]);
   const [auditLogsList, setAuditLogsList] = useState<any[]>([]);
@@ -55,16 +43,13 @@ export default function Reports() {
   const [error, setError] = useState('');
   const [fiscalYear, setFiscalYear] = useState(2026);
 
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+
   const fetchData = async () => {
     setLoading(true);
     setError('');
     try {
-      const bsRes = await financeApi.reports.balanceSheet();
-      setBalanceSheet(bsRes.data.data ?? { assets: [], liabilities: [], equity: [] });
-
-      const isRes = await financeApi.reports.incomeStatement();
-      setIncomeStatement(isRes.data.data ?? { income: [], expenses: [] });
-
       const accRes = await financeApi.accounts.list();
       setAccountsList(accRes.data.data ?? []);
 
@@ -84,26 +69,62 @@ export default function Reports() {
     fetchData();
   }, []);
 
+  // Compute dynamic account balances based on active date range filters
+  const computedAccounts = accountsList.map(acc => {
+    if (!startDate && !endDate) return acc;
+    
+    let balance = parseFloat(acc.opening_balance || '0');
+    
+    journalsList.forEach(entry => {
+      if (entry.status !== 'Posted') return;
+      if (startDate && entry.entry_date < startDate) return;
+      if (endDate && entry.entry_date > endDate) return;
+      
+      entry.items.forEach(item => {
+        if (item.account_id === acc.account_id) {
+          const deb = parseFloat(item.debit_amount || '0');
+          const cred = parseFloat(item.credit_amount || '0');
+          if (acc.account_type === 'Asset' || acc.account_type === 'Expense') {
+            balance += deb - cred;
+          } else {
+            balance += cred - deb;
+          }
+        }
+      });
+    });
+    
+    return {
+      ...acc,
+      current_balance: balance.toString()
+    };
+  });
+
+  const dynamicAssets = computedAccounts.filter(a => a.account_type === 'Asset');
+  const dynamicLiabilities = computedAccounts.filter(a => a.account_type === 'Liability');
+  const dynamicEquity = computedAccounts.filter(a => a.account_type === 'Equity');
+  const dynamicIncome = computedAccounts.filter(a => a.account_type === 'Income');
+  const dynamicExpenses = computedAccounts.filter(a => a.account_type === 'Expense');
+
   // Income Statement (P&L) calculations
-  const totalIncome = incomeStatement.income.reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
-  const totalExpenses = incomeStatement.expenses.reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
+  const totalIncome = dynamicIncome.reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
+  const totalExpenses = dynamicExpenses.reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
   const netProfit = totalIncome - totalExpenses;
 
   // Balance Sheet calculations
-  const totalAssets = balanceSheet.assets.reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
-  const totalLiabilities = balanceSheet.liabilities.reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
-  const totalEquity = balanceSheet.equity.reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
+  const totalAssets = dynamicAssets.reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
+  const totalLiabilities = dynamicLiabilities.reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
+  const totalEquity = dynamicEquity.reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
   
   // Real-time alignment of Net Profit to Equity (CA Rules)
   const totalLiabilitiesAndEquity = totalLiabilities + totalEquity + netProfit;
   const isBalanced = Math.abs(totalAssets - totalLiabilitiesAndEquity) < 0.01;
 
   // Trial Balance calculations
-  const trialDebits = accountsList
+  const trialDebits = computedAccounts
     .filter(a => a.account_type === 'Asset' || a.account_type === 'Expense')
     .reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
 
-  const trialCredits = accountsList
+  const trialCredits = computedAccounts
     .filter(a => a.account_type === 'Liability' || a.account_type === 'Equity' || a.account_type === 'Income')
     .reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
 
@@ -118,15 +139,15 @@ export default function Reports() {
   const isAuditTrailSynchronized = postedJournalCount === auditTrailMatches || auditTrailMatches > 0;
 
   // Liquid assets & Cash liquidity check
-  const cashAccounts = accountsList.filter(a => a.account_code === '1001');
+  const cashAccounts = computedAccounts.filter(a => a.account_code === '1001');
   const cashBalance = cashAccounts.reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
   const hasNegativeCash = cashBalance < 0;
 
   // Current ratio (Working capital check as per IFRS IAS 1)
-  const currentAssets = accountsList
+  const currentAssets = computedAccounts
     .filter(a => a.account_code.startsWith('1'))
     .reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
-  const currentLiabilities = accountsList
+  const currentLiabilities = computedAccounts
     .filter(a => a.account_type === 'Liability')
     .reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
   const currentRatio = currentLiabilities > 0 ? (currentAssets / currentLiabilities) : 1.5; // default healthy if 0 liabilities
@@ -176,6 +197,21 @@ export default function Reports() {
           </div>
         </div>
 
+        {/* Date Range Filtering bar */}
+        <div style={{ display: 'flex', gap: '1rem', background: 'var(--surface)', padding: '12px 18px', borderRadius: '12px', marginBottom: '1.5rem', alignItems: 'center', flexWrap: 'wrap' }} className="no-print">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>📅 Date Range Filter:</span>
+            <input type="date" className="form-input" style={{ width: '150px', padding: '6px 10px', fontSize: '0.8rem' }} value={startDate} onChange={e => setStartDate(e.target.value)} />
+            <span style={{ color: 'var(--text-muted)' }}>to</span>
+            <input type="date" className="form-input" style={{ width: '150px', padding: '6px 10px', fontSize: '0.8rem' }} value={endDate} onChange={e => setEndDate(e.target.value)} />
+          </div>
+          {(startDate || endDate) && (
+            <button className="btn btn-secondary btn-sm" onClick={() => { setStartDate(''); setEndDate(''); }} style={{ padding: '4px 10px', fontSize: '0.75rem' }}>
+              Clear Filter
+            </button>
+          )}
+        </div>
+
         {error && <div className="login-error" style={{ marginBottom: '1.5rem' }}>{error}</div>}
 
         {/* Tab Buttons */}
@@ -185,6 +221,7 @@ export default function Reports() {
             { id: 'incomeStatement', label: '📊 Profit & Loss (P&L)' },
             { id: 'trialBalance', label: '📈 Trial Balance' },
             { id: 'ledgerJournals', label: '📒 General Ledger Journals' },
+            { id: 'customReport', label: '⚙️ Custom Report Builder' },
             { id: 'auditorCheck', label: '🛡️ Compliance & Controls' },
           ].map(tab => (
             <button
@@ -315,12 +352,12 @@ export default function Reports() {
                       </tr>
                     </thead>
                     <tbody>
-                      {balanceSheet.assets.length === 0 ? (
+                      {dynamicAssets.length === 0 ? (
                         <tr>
                           <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No asset accounts seeded</td>
                         </tr>
                       ) : (
-                        balanceSheet.assets.map(a => (
+                        dynamicAssets.map(a => (
                           <tr key={a.account_id}>
                             <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{a.account_code}</td>
                             <td>{a.account_name}</td>
@@ -354,12 +391,12 @@ export default function Reports() {
                         </tr>
                       </thead>
                       <tbody>
-                        {balanceSheet.liabilities.length === 0 ? (
+                        {dynamicLiabilities.length === 0 ? (
                           <tr>
                             <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>No current liabilities logged</td>
                           </tr>
                         ) : (
-                          balanceSheet.liabilities.map(a => (
+                          dynamicLiabilities.map(a => (
                             <tr key={a.account_id}>
                               <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{a.account_code}</td>
                               <td>{a.account_name}</td>
@@ -391,12 +428,12 @@ export default function Reports() {
                         </tr>
                       </thead>
                       <tbody>
-                        {balanceSheet.equity.length === 0 ? (
+                        {dynamicEquity.length === 0 ? (
                           <tr>
                             <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No capital accounts seeded</td>
                           </tr>
                         ) : (
-                          balanceSheet.equity.map(a => (
+                          dynamicEquity.map(a => (
                             <tr key={a.account_id}>
                               <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{a.account_code}</td>
                               <td>{a.account_name}</td>
@@ -503,7 +540,7 @@ export default function Reports() {
               {/* Revenue Stream Donut Chart */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
                 {(() => {
-                  const incomeItems = incomeStatement.income;
+                  const incomeItems = dynamicIncome;
                   const total = incomeItems.reduce((sum, item) => sum + parseFloat(item.current_balance || '0'), 0);
 
                   // Colors for segments
@@ -573,12 +610,12 @@ export default function Reports() {
                       </tr>
                     </thead>
                     <tbody>
-                      {incomeStatement.income.length === 0 ? (
+                      {dynamicIncome.length === 0 ? (
                         <tr>
                           <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No operating revenues recorded</td>
                         </tr>
                       ) : (
-                        incomeStatement.income.map(a => (
+                        dynamicIncome.map(a => (
                           <tr key={a.account_id}>
                             <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{a.account_code}</td>
                             <td>{a.account_name}</td>
@@ -610,12 +647,12 @@ export default function Reports() {
                       </tr>
                     </thead>
                     <tbody>
-                      {incomeStatement.expenses.length === 0 ? (
+                      {dynamicExpenses.length === 0 ? (
                         <tr>
                           <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No operating expenses recorded</td>
                         </tr>
                       ) : (
-                        incomeStatement.expenses.map(a => (
+                        dynamicExpenses.map(a => (
                           <tr key={a.account_id}>
                             <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{a.account_code}</td>
                             <td>{a.account_name}</td>
@@ -825,7 +862,7 @@ export default function Reports() {
               </div>
             )}
           </div>
-        ) : (
+        ) : activeTab === 'auditorCheck' ? (
           /* Auditor Compliance Dashboard Tab */
           <div>
             {/* Compliance Summary Header Badge */}
@@ -973,8 +1010,156 @@ export default function Reports() {
               </div>
             </div>
           </div>
-        )}
+        ) : activeTab === 'customReport' ? (
+          <div>
+            <CustomReportBuilder computedAccounts={computedAccounts} />
+          </div>
+        ) : null}
       </div>
     </>
+  );
+}
+
+/* ─── Custom Report Builder Component ────────────────────────────────────────── */
+function CustomReportBuilder({ computedAccounts }: { computedAccounts: Account[] }) {
+  const [types, setTypes] = useState<string[]>(['Asset', 'Liability', 'Equity', 'Income', 'Expense']);
+  const [search, setSearch] = useState('');
+  const [minBalance, setMinBalance] = useState('');
+  
+  const filtered = computedAccounts.filter(acc => {
+    if (!types.includes(acc.account_type)) return false;
+    if (search && !acc.account_name.toLowerCase().includes(search.toLowerCase()) && !acc.account_code.includes(search)) return false;
+    if (minBalance && Math.abs(parseFloat(acc.current_balance || '0')) < parseFloat(minBalance)) return false;
+    return true;
+  });
+
+  const totalBalance = filtered.reduce((sum, a) => sum + parseFloat(a.current_balance || '0'), 0);
+
+  const handleExportCSV = () => {
+    const headers = ['Account Code', 'Account Name', 'Type', 'Current Balance (INR)'];
+    const rows = filtered.map(a => [a.account_code, a.account_name, a.account_type, a.current_balance]);
+    const csvContent = "data:text/csv;charset=utf-8," 
+      + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `custom_financial_report_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  return (
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: '0.75rem' }}>
+        <div>
+          <h2 style={{ margin: 0 }}>Custom Statement & Report Builder</h2>
+          <p style={{ margin: '0.25rem 0 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Compile, slice and audit custom reports based on criteria.</p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.75rem' }} className="no-print">
+          <button className="btn btn-secondary" onClick={handleExportCSV}>📥 Export CSV</button>
+          <button className="btn btn-primary" onClick={() => window.print()}>🖨️ Print PDF</button>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2.5fr', gap: '1.5rem' }} className="no-print">
+        {/* Controls Panel */}
+        <div style={{ background: 'rgba(255,255,255,0.02)', padding: '1.25rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.1)', height: 'fit-content' }}>
+          <h4 style={{ margin: '0 0 1rem 0' }}>Report Parameters</h4>
+          
+          <div className="form-group" style={{ marginBottom: '1rem' }}>
+            <label className="form-label">Search Account</label>
+            <input className="form-input" placeholder="Code or Name..." value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+
+          <div className="form-group" style={{ marginBottom: '1rem' }}>
+            <label className="form-label">Min absolute balance (INR)</label>
+            <input className="form-input" type="number" placeholder="e.g. 5000" value={minBalance} onChange={e => setMinBalance(e.target.value)} />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" style={{ marginBottom: '0.5rem', display: 'block' }}>Account Types</label>
+            {['Asset', 'Liability', 'Equity', 'Income', 'Expense'].map(t => {
+              const checked = types.includes(t);
+              return (
+                <label key={t} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem', cursor: 'pointer', fontSize: '0.85rem' }}>
+                  <input type="checkbox" checked={checked} onChange={() => {
+                    setTypes(prev => checked ? prev.filter(x => x !== t) : [...prev, t]);
+                  }} />
+                  {t}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Data Table Panel */}
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div className="table-wrap" style={{ flex: 1 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Account Name</th>
+                  <th>Type</th>
+                  <th style={{ textAlign: 'right' }}>Current Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>No accounts match selected criteria</td>
+                  </tr>
+                ) : (
+                  filtered.map(a => (
+                    <tr key={a.account_id}>
+                      <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{a.account_code}</td>
+                      <td>{a.account_name}</td>
+                      <td><span className="badge badge-info">{a.account_type}</span></td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>INR {parseFloat(a.current_balance || '0').toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop: '2px solid rgba(255,255,255,0.15)', fontWeight: 'bold' }}>
+                  <td colSpan={3}>Aggregate Sum</td>
+                  <td style={{ textAlign: 'right', color: 'var(--accent-primary)', fontSize: '1.05rem' }}>INR {totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+      
+      {/* Print-only version of custom report */}
+      <div className="print-only" style={{ display: 'none' }}>
+        <h3 style={{ textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '2px solid #000', paddingBottom: '0.5rem' }}>Custom compiled financial report</h3>
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '1rem' }}>
+          <thead>
+            <tr>
+              <th style={{ borderBottom: '2px solid #000', textAlign: 'left', padding: '8px' }}>Code</th>
+              <th style={{ borderBottom: '2px solid #000', textAlign: 'left', padding: '8px' }}>Account Name</th>
+              <th style={{ borderBottom: '2px solid #000', textAlign: 'left', padding: '8px' }}>Type</th>
+              <th style={{ borderBottom: '2px solid #000', textAlign: 'right', padding: '8px' }}>Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map(a => (
+              <tr key={a.account_id} style={{ borderBottom: '1px solid #ddd' }}>
+                <td style={{ padding: '8px' }}>{a.account_code}</td>
+                <td style={{ padding: '8px' }}>{a.account_name}</td>
+                <td style={{ padding: '8px' }}>{a.account_type}</td>
+                <td style={{ padding: '8px', textAlign: 'right' }}>INR {parseFloat(a.current_balance || '0').toLocaleString()}</td>
+              </tr>
+            ))}
+            <tr style={{ borderTop: '2px solid #000', fontWeight: 'bold' }}>
+              <td colSpan={3} style={{ padding: '8px' }}>Aggregate Sum</td>
+              <td style={{ padding: '8px', textAlign: 'right' }}>INR {totalBalance.toLocaleString()}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }

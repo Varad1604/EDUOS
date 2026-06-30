@@ -140,6 +140,28 @@ pub async fn allocate_room(
     .await
     .map_err(AppError::Database)?;
 
+    let rent: f64 = room.rent_amount.parse().unwrap_or(0.0);
+    let mess_fee = match req.mess_plan.as_str() {
+        "Veg" => 2000.0,
+        "Non-Veg" => 3000.0,
+        _ => 0.0,
+    };
+    let total_amount = rent + mess_fee;
+
+    // Auto-post to fee allocations in Finance module
+    sqlx::query(
+        r#"
+        INSERT INTO fee_allocations (fee_allocation_id, institution_id, student_id, fee_structure_id, academic_year, semester, total_amount, due_date, status)
+        VALUES (gen_random_uuid(), $1, $2, NULL, EXTRACT(YEAR FROM CURRENT_DATE), 1, $3, CURRENT_DATE + INTERVAL '15 days', 'Generated')
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(req.student_id)
+    .bind(total_amount)
+    .execute(&mut *tx)
+    .await
+    .map_err(AppError::Database)?;
+
     tx.commit().await.map_err(AppError::Database)?;
 
     // 4. Calculate total charging amount
@@ -303,4 +325,174 @@ pub async fn list_student_allocations(
     .map_err(AppError::Database)?;
 
     Ok(allocations)
+}
+
+pub async fn create_maintenance_ticket(
+    db: &PgPool,
+    claims: &Claims,
+    req: CreateMaintenanceTicketRequest,
+) -> Result<MaintenanceTicket, AppError> {
+    sqlx::query_as::<_, MaintenanceTicket>(
+        r#"
+        INSERT INTO hostel_maintenance_tickets (ticket_id, institution_id, room_id, reported_by, issue_type, description, status)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 'Open')
+        RETURNING *
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(req.room_id)
+    .bind(claims.sub) // Assumes reporter is the student caller
+    .bind(&req.issue_type)
+    .bind(&req.description)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn update_ticket_status(
+    db: &PgPool,
+    claims: &Claims,
+    ticket_id: Uuid,
+    req: UpdateTicketStatusRequest,
+) -> Result<MaintenanceTicket, AppError> {
+    sqlx::query_as::<_, MaintenanceTicket>(
+        r#"
+        UPDATE hostel_maintenance_tickets
+        SET status = $1, updated_at = NOW()
+        WHERE ticket_id = $2 AND institution_id = $3
+        RETURNING *
+        "#
+    )
+    .bind(&req.status)
+    .bind(ticket_id)
+    .bind(claims.institution_id)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn list_maintenance_tickets(
+    db: &PgPool,
+    claims: &Claims,
+) -> Result<Vec<MaintenanceTicket>, AppError> {
+    sqlx::query_as::<_, MaintenanceTicket>(
+        "SELECT * FROM hostel_maintenance_tickets WHERE institution_id = $1 ORDER BY created_at DESC"
+    )
+    .bind(claims.institution_id)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn request_hostel_leave(
+    db: &PgPool,
+    claims: &Claims,
+    req: CreateHostelLeaveRequest,
+) -> Result<HostelLeave, AppError> {
+    sqlx::query_as::<_, HostelLeave>(
+        r#"
+        INSERT INTO hostel_leave_requests (leave_id, institution_id, student_id, departure_date, return_date, reason, status)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 'Pending')
+        RETURNING *
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(claims.sub)
+    .bind(req.departure_date)
+    .bind(req.return_date)
+    .bind(&req.reason)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn approve_hostel_leave(
+    db: &PgPool,
+    claims: &Claims,
+    leave_id: Uuid,
+    approve: bool,
+) -> Result<HostelLeave, AppError> {
+    let status = if approve { "Approved" } else { "Rejected" };
+    sqlx::query_as::<_, HostelLeave>(
+        r#"
+        UPDATE hostel_leave_requests
+        SET status = $1, updated_at = NOW()
+        WHERE leave_id = $2 AND institution_id = $3
+        RETURNING *
+        "#
+    )
+    .bind(status)
+    .bind(leave_id)
+    .bind(claims.institution_id)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn list_leave_requests(
+    db: &PgPool,
+    claims: &Claims,
+) -> Result<Vec<HostelLeave>, AppError> {
+    sqlx::query_as::<_, HostelLeave>(
+        "SELECT * FROM hostel_leave_requests WHERE institution_id = $1 ORDER BY created_at DESC"
+    )
+    .bind(claims.institution_id)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn create_mess_menu(
+    db: &PgPool,
+    claims: &Claims,
+    req: CreateMessMenuRequest,
+) -> Result<MessMenu, AppError> {
+    sqlx::query_as::<_, MessMenu>(
+        r#"
+        INSERT INTO mess_menus (menu_id, institution_id, day_of_week, meal_type, items)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4)
+        RETURNING *
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(&req.day_of_week)
+    .bind(&req.meal_type)
+    .bind(&req.items)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn get_mess_menus(
+    db: &PgPool,
+    claims: &Claims,
+) -> Result<Vec<MessMenu>, AppError> {
+    sqlx::query_as::<_, MessMenu>(
+        "SELECT * FROM mess_menus WHERE institution_id = $1 ORDER BY day_of_week, meal_type"
+    )
+    .bind(claims.institution_id)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn set_mess_preference(
+    db: &PgPool,
+    claims: &Claims,
+    req: MessPreferenceRequest,
+) -> Result<MessPreference, AppError> {
+    sqlx::query_as::<_, MessPreference>(
+        r#"
+        INSERT INTO mess_preferences (preference_id, institution_id, student_id, dietary_preference)
+        VALUES (gen_random_uuid(), $1, $2, $3)
+        ON CONFLICT (student_id) DO UPDATE SET dietary_preference = EXCLUDED.dietary_preference
+        RETURNING *
+        "#
+    )
+    .bind(claims.institution_id)
+    .bind(claims.sub)
+    .bind(&req.dietary_preference)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
 }

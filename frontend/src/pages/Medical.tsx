@@ -5,7 +5,7 @@ import { usePermissions } from '../hooks/usePermissions';
 
 /* ─── Types ──────────────────────────────────────────────────────────────────── */
 interface MedVisit {
-  visit_id: string; student_id: string; student_name?: string;
+  visit_id: string; student_id: string; student_name?: string; roll_number?: string;
   visit_date: string; visit_time?: string; chief_complaint: string;
   doctor_name: string; diagnosis?: string; notes?: string;
   follow_up_date?: string; status: string;
@@ -62,6 +62,26 @@ export default function Medical() {
   const [showVisitModal, setShowVisitModal] = useState(false);
   const [showInventoryModal, setShowInventoryModal] = useState(false);
   const [showSickLeaveModal, setShowSickLeaveModal] = useState<string>(''); // visit_id
+  const [showVitalsModal, setShowVitalsModal] = useState<string>(''); // visit_id
+  const [showPrescriptionModal, setShowPrescriptionModal] = useState<string>(''); // visit_id
+  const [showDispenseModal, setShowDispenseModal] = useState<any>(null); //General item or general form
+
+  const [visitDetails, setVisitDetails] = useState<Record<string, { vitals?: any[], prescriptions?: any[] }>>({});
+
+  const loadVisitDetails = async (visitId: string) => {
+    try {
+      const [vits, pres] = await Promise.all([
+        medicalApi.getVitals(visitId).catch(() => []),
+        medicalApi.getPrescriptions(visitId).catch(() => []),
+      ]);
+      setVisitDetails(prev => ({
+        ...prev,
+        [visitId]: { vitals: vits, prescriptions: pres }
+      }));
+    } catch (err) {
+      console.warn("Failed to fetch visit details", err);
+    }
+  };
 
   const showMsg = (msg: string, type: 'success' | 'error' = 'success') => {
     setToast(msg); setToastType(type);
@@ -91,7 +111,7 @@ export default function Medical() {
     if (canManage) {
       studentsApi.list({ limit: 200 })
         .then(r => setStudents(r.data.data ?? []))
-        .catch(() => {});
+        .catch(err => console.warn('Request failed:', err));
     }
   }, [canManage]);
 
@@ -203,32 +223,90 @@ export default function Medical() {
           </div>
         ) : (
           <div style={{ display: 'grid', gap: 12 }}>
-            {visits.map(v => (
-              <div key={v.visit_id} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 22px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 6, flexWrap: 'wrap' }}>
-                      <span style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text)' }}>{v.chief_complaint}</span>
-                      {pill(v.status)}
+            {visits.map(v => {
+              const details = visitDetails[v.visit_id];
+              return (
+                <div key={v.visit_id} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 22px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 6, flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text)' }}>{v.chief_complaint}</span>
+                        {pill(v.status)}
+                      </div>
+                      <div style={{ fontSize: '0.83rem', color: 'var(--text-secondary)', marginBottom: 4 }}>
+                        👤 Student: <strong>{v.student_name ?? v.student_id}</strong> ({v.roll_number})
+                      </div>
+                      <div style={{ fontSize: '0.83rem', color: 'var(--text-secondary)', marginBottom: 4 }}>
+                        👨‍⚕️ Dr. {v.doctor_name} · 📅 {fmt(v.visit_date)}
+                      </div>
+                      {v.diagnosis && <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>Dx: {v.diagnosis}</div>}
+                      {v.notes && <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 4, fontStyle: 'italic' }}>{v.notes}</div>}
+                      {v.follow_up_date && (
+                        <div style={{ fontSize: '0.78rem', color: '#f59e0b', marginTop: 4 }}>🔁 Follow-up: {fmt(v.follow_up_date)}</div>
+                      )}
                     </div>
-                    <div style={{ fontSize: '0.83rem', color: 'var(--text-secondary)', marginBottom: 4 }}>
-                      👨‍⚕️ Dr. {v.doctor_name} · 📅 {fmt(v.visit_date)}
-                    </div>
-                    {v.diagnosis && <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>Dx: {v.diagnosis}</div>}
-                    {v.notes && <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 4, fontStyle: 'italic' }}>{v.notes}</div>}
-                    {v.follow_up_date && (
-                      <div style={{ fontSize: '0.78rem', color: '#f59e0b', marginTop: 4 }}>🔁 Follow-up: {fmt(v.follow_up_date)}</div>
-                    )}
-                  </div>
-                  {canManage && v.status === 'Open' && (
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <button className="btn btn-secondary btn-sm" onClick={() => setShowSickLeaveModal(v.visit_id)}>Issue Sick Leave</button>
-                      <button className="btn btn-danger btn-sm" onClick={() => handleClose(v.visit_id)}>Close Visit</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => {
+                        if (details) {
+                          setVisitDetails(prev => {
+                            const copy = { ...prev };
+                            delete copy[v.visit_id];
+                            return copy;
+                          });
+                        } else {
+                          loadVisitDetails(v.visit_id);
+                        }
+                      }}>
+                        {details ? '▲ Hide Medical File' : '▼ View Medical File'}
+                      </button>
+                      {canManage && v.status === 'Open' && (
+                        <>
+                          <button className="btn btn-secondary btn-sm" onClick={() => setShowVitalsModal(v.visit_id)}>📊 Vitals</button>
+                          <button className="btn btn-secondary btn-sm" onClick={() => setShowPrescriptionModal(v.visit_id)}>💊 Prescribe</button>
+                          <button className="btn btn-secondary btn-sm" onClick={() => setShowSickLeaveModal(v.visit_id)}>📄 Leave Cert</button>
+                          <button className="btn btn-danger btn-sm" onClick={() => handleClose(v.visit_id)}>🚪 Close Case</button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {details && (
+                    <div style={{ marginTop: '1.25rem', padding: '1rem', background: 'rgba(99, 102, 241, 0.03)', borderRadius: '8px', border: '1px solid var(--border)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                      <div>
+                        <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>📊 Patient Vitals</h4>
+                        {!details.vitals || details.vitals.length === 0 ? (
+                          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>No vitals recorded.</span>
+                        ) : (
+                          <div style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                            <div>Temp: <strong>{details.vitals[0].temperature_c ?? 'N/A'} °C</strong></div>
+                            <div>Pulse: <strong>{details.vitals[0].pulse_bpm ?? 'N/A'} bpm</strong></div>
+                            <div>BP: <strong>{details.vitals[0].bp_systolic ?? 'N/A'}/{details.vitals[0].bp_diastolic ?? 'N/A'} mmHg</strong></div>
+                            <div>SpO2: <strong>{details.vitals[0].spo2_pct ?? 'N/A'}%</strong></div>
+                            <div>Weight: <strong>{details.vitals[0].weight_kg ?? 'N/A'} kg</strong></div>
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>💊 Prescribed Treatment</h4>
+                        {!details.prescriptions || details.prescriptions.length === 0 ? (
+                          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>No prescriptions issued.</span>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                            {details.prescriptions.map((pr: any) => (
+                              <div key={pr.prescription_id} style={{ fontSize: '0.8rem', borderBottom: '1px dashed var(--border)', paddingBottom: '0.25rem' }}>
+                                <div><strong>{pr.medicine_name}</strong> - {pr.dosage} ({pr.route})</div>
+                                <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Frequency: {pr.frequency} · Duration: {pr.duration_days} days</div>
+                                {pr.instructions && <div style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--text-muted)' }}>* {pr.instructions}</div>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -274,6 +352,16 @@ export default function Medical() {
         {showSickLeaveModal && (
           <SickLeaveModal visitId={showSickLeaveModal} students={students} onClose={() => setShowSickLeaveModal('')} onSaved={() => { showMsg('Sick leave certificate issued!'); setShowSickLeaveModal(''); loadAll(); }} />
         )}
+
+        {/* Vitals Modal */}
+        {showVitalsModal && (
+          <VitalsModal visitId={showVitalsModal} onClose={() => setShowVitalsModal('')} onSaved={() => { showMsg('Vitals recorded successfully!'); setShowVitalsModal(''); loadVisitDetails(showVitalsModal); }} />
+        )}
+
+        {/* Prescription Modal */}
+        {showPrescriptionModal && (
+          <PrescriptionModal visitId={showPrescriptionModal} onClose={() => setShowPrescriptionModal('')} onSaved={() => { showMsg('Prescription recorded!'); setShowPrescriptionModal(''); loadVisitDetails(showPrescriptionModal); }} />
+        )}
       </div>
     );
   }
@@ -309,7 +397,10 @@ export default function Medical() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <h3 style={{ margin: 0, color: 'var(--text)' }}>Medical Inventory ({inventory.length} items)</h3>
           {canManage && (
-            <button id="add-inventory-btn" className="btn btn-primary" onClick={() => setShowInventoryModal(true)}>+ Add Item</button>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button id="dispense-medicine-btn" className="btn btn-secondary" onClick={() => setShowDispenseModal(true)}>💊 Dispense Medicine</button>
+              <button id="add-inventory-btn" className="btn btn-primary" onClick={() => setShowInventoryModal(true)}>+ Add Item</button>
+            </div>
           )}
         </div>
 
@@ -418,6 +509,10 @@ export default function Medical() {
               </form>
             </div>
           </div>
+        )}
+
+        {showDispenseModal && (
+          <DispenseModal inventory={inventory} onClose={() => setShowDispenseModal(false)} onSaved={() => { showMsg('Medicine dispensed successfully!'); setShowDispenseModal(false); loadAll(); }} />
         )}
       </div>
     );
@@ -563,6 +658,197 @@ function SickLeaveModal({ visitId, students, onClose, onSaved }: {
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button type="submit" className="btn btn-primary">Issue Certificate</button>
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Vitals Sub-Modal ──────────────────────────────────────────────────────── */
+function VitalsModal({ visitId, onClose, onSaved }: { visitId: string; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState({
+    temperature_c: '', pulse_bpm: '', bp_systolic: '', bp_diastolic: '', spo2_pct: '', weight_kg: '', height_cm: ''
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await medicalApi.recordVitals(visitId, {
+        temperature_c: form.temperature_c ? parseFloat(form.temperature_c) : null,
+        pulse_bpm: form.pulse_bpm ? parseInt(form.pulse_bpm) : null,
+        bp_systolic: form.bp_systolic ? parseInt(form.bp_systolic) : null,
+        bp_diastolic: form.bp_diastolic ? parseInt(form.bp_diastolic) : null,
+        spo2_pct: form.spo2_pct ? parseFloat(form.spo2_pct) : null,
+        weight_kg: form.weight_kg ? parseFloat(form.weight_kg) : null,
+        height_cm: form.height_cm ? parseFloat(form.height_cm) : null
+      });
+      onSaved();
+    } catch (err: any) {
+      alert(err.message || 'Failed to record vitals');
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
+        <h2>Record Vitals</h2>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="form-group">
+              <label>Temperature (°C)</label>
+              <input className="form-input" type="number" step="0.1" value={form.temperature_c} onChange={e => setForm(p => ({ ...p, temperature_c: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label>Pulse (BPM)</label>
+              <input className="form-input" type="number" value={form.pulse_bpm} onChange={e => setForm(p => ({ ...p, pulse_bpm: e.target.value }))} />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="form-group">
+              <label>BP Systolic (mmHg)</label>
+              <input className="form-input" type="number" value={form.bp_systolic} onChange={e => setForm(p => ({ ...p, bp_systolic: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label>BP Diastolic (mmHg)</label>
+              <input className="form-input" type="number" value={form.bp_diastolic} onChange={e => setForm(p => ({ ...p, bp_diastolic: e.target.value }))} />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <div className="form-group">
+              <label>SpO2 (%)</label>
+              <input className="form-input" type="number" step="0.1" value={form.spo2_pct} onChange={e => setForm(p => ({ ...p, spo2_pct: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label>Weight (kg)</label>
+              <input className="form-input" type="number" step="0.1" value={form.weight_kg} onChange={e => setForm(p => ({ ...p, weight_kg: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label>Height (cm)</label>
+              <input className="form-input" type="number" step="0.1" value={form.height_cm} onChange={e => setForm(p => ({ ...p, height_cm: e.target.value }))} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button type="submit" className="btn btn-primary">Save Vitals</button>
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Prescription Sub-Modal ────────────────────────────────────────────────── */
+function PrescriptionModal({ visitId, onClose, onSaved }: { visitId: string; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState({
+    medicine_name: '', dosage: '', frequency: 'OD', duration_days: '5', route: 'Oral', instructions: ''
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await medicalApi.createPrescription({
+        visit_id: visitId,
+        medicine_name: form.medicine_name,
+        dosage: form.dosage,
+        frequency: form.frequency,
+        duration_days: parseInt(form.duration_days),
+        route: form.route,
+        instructions: form.instructions || null
+      });
+      onSaved();
+    } catch (err: any) {
+      alert(err.message || 'Failed to prescribe medicine');
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
+        <h2>Issue Prescription</h2>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="form-group">
+            <label>Medicine Name *</label>
+            <input className="form-input" value={form.medicine_name} onChange={e => setForm(p => ({ ...p, medicine_name: e.target.value }))} required placeholder="e.g. Paracetamol 650mg" />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="form-group">
+              <label>Dosage *</label>
+              <input className="form-input" value={form.dosage} onChange={e => setForm(p => ({ ...p, dosage: e.target.value }))} required placeholder="e.g. 1 Tablet" />
+            </div>
+            <div className="form-group">
+              <label>Duration (days) *</label>
+              <input className="form-input" type="number" value={form.duration_days} onChange={e => setForm(p => ({ ...p, duration_days: e.target.value }))} required />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="form-group">
+              <label>Frequency</label>
+              <select className="form-input" value={form.frequency} onChange={e => setForm(p => ({ ...p, frequency: e.target.value }))}>
+                {['OD', 'BD', 'TDS', 'QID', 'SOS', 'PRN'].map(f => <option key={f}>{f}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Route</label>
+              <select className="form-input" value={form.route} onChange={e => setForm(p => ({ ...p, route: e.target.value }))}>
+                {['Oral', 'Topical', 'IV', 'IM', 'Sublingual', 'Inhalation', 'Other'].map(r => <option key={r}>{r}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="form-group">
+            <label>Instructions</label>
+            <textarea className="form-input" rows={2} value={form.instructions} onChange={e => setForm(p => ({ ...p, instructions: e.target.value }))} placeholder="Take after meals, avoid cold water…" />
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button type="submit" className="btn btn-primary">Add Prescription</button>
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Pharmacy Dispense Modal ───────────────────────────────────────────────── */
+function DispenseModal({ inventory, onClose, onSaved }: { inventory: any[]; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState({
+    item_id: '', quantity: '1'
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.item_id) return alert('Select medicine first');
+    try {
+      await medicalApi.adjustStock(form.item_id, -parseInt(form.quantity), 'Dispensed');
+      onSaved();
+    } catch (err: any) {
+      alert(err.message || 'Dispensing failed');
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+        <h2>Pharmacy Dispensing Desk</h2>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="form-group">
+            <label>Select Medicine from Inventory *</label>
+            <select className="form-input" value={form.item_id} onChange={e => setForm(p => ({ ...p, item_id: e.target.value }))} required>
+              <option value="">-- Choose Item --</option>
+              {inventory.map(item => (
+                <option key={item.item_id} value={item.item_id}>
+                  {item.item_name} (Category: {item.item_category} · Current Stock: {item.quantity_in_stock} {item.unit})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Quantity to Dispense *</label>
+            <input className="form-input" type="number" min="1" value={form.quantity} onChange={e => setForm(p => ({ ...p, quantity: e.target.value }))} required />
+          </div>
+          <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+            <button type="submit" className="btn btn-primary">Dispense Medicine</button>
             <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
           </div>
         </form>

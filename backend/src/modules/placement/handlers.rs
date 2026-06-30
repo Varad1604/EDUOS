@@ -5,16 +5,11 @@ use axum::{
     Extension, Json,
 };
 use serde::Deserialize;
-use serde_json::json;
 use uuid::Uuid;
 use validator::Validate;
 
-use crate::{error::AppError, middleware::auth::Claims, state::AppState};
+use crate::{error::AppError, middleware::auth::Claims, response::ok, state::AppState};
 use super::{models::*, service};
-
-fn ok<T: serde::Serialize>(data: T) -> Json<serde_json::Value> {
-    Json(json!({ "success": true, "data": data }))
-}
 
 // ── Companies ──────────────────────────────────────────────────────────────────
 
@@ -197,5 +192,57 @@ pub async fn get_eligible_students(
 ) -> Result<impl IntoResponse, AppError> {
     let students = service::get_eligible_students(&state.db, claims.institution_id, drive_id).await?;
     Ok(ok(students))
+}
+
+pub async fn schedule_interview(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(body): Json<ScheduleInterviewRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let interview = service::schedule_interview(&state.db, claims.institution_id, body).await?;
+    Ok((StatusCode::CREATED, ok(interview)))
+}
+
+pub async fn list_interviews(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<impl IntoResponse, AppError> {
+    let interviews = service::list_interviews(&state.db, claims.institution_id).await?;
+    Ok(ok(interviews))
+}
+
+pub async fn update_interview_status(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(interview_id): Path<Uuid>,
+    Json(body): Json<UpdateInterviewStatusRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let interview = service::update_interview_status(&state.db, claims.institution_id, interview_id, body).await?;
+    Ok(ok(interview))
+}
+
+pub async fn register_alumni_placement(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(body): Json<TrackAlumniPlacementRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let alumni = service::register_alumni_placement(&state.db, claims.institution_id, body).await?;
+    Ok((StatusCode::CREATED, ok(alumni)))
+}
+
+pub async fn list_alumni_placements(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<impl IntoResponse, AppError> {
+    let list = service::list_alumni_placements(&state.db, claims.institution_id).await?;
+    Ok(ok(list))
+}
+
+pub async fn get_placement_analytics_stats(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<impl IntoResponse, AppError> {
+    let stats = service::get_placement_analytics_stats(&state.db, claims.institution_id).await?;
+    Ok(ok(stats))
 }
 

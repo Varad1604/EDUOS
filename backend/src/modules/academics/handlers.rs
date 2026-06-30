@@ -2,11 +2,7 @@ use axum::{extract::{Path, Query, State}, Extension, Json};
 use serde_json::json;
 use serde::Deserialize;
 use uuid::Uuid;
-use crate::{error::AppError, middleware::auth::Claims, modules::academics::{models::*, service}, state::AppState};
-
-fn ok<T: serde::Serialize>(data: T) -> Json<serde_json::Value> {
-    Json(json!({ "success": true, "data": data, "meta": { "timestamp": chrono::Utc::now() } }))
-}
+use crate::{error::AppError, middleware::auth::Claims, modules::academics::{models::*, service}, response::ok, state::AppState};
 
 #[derive(Deserialize)] pub struct CourseQuery { pub curriculum_id: Option<Uuid> }
 #[derive(Deserialize)] pub struct WorkloadQuery { pub academic_year: Option<i32>, pub semester: Option<i32> }
@@ -40,6 +36,14 @@ pub async fn update_course(
     Path(id): Path<Uuid>, Json(b): Json<CreateCourseRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     Ok(ok(service::update_course(&s.db, &c, id, b).await?))
+}
+
+pub async fn delete_course(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    service::delete_course(&s.db, &c, id).await?;
+    Ok(ok(json!({ "deleted": true })))
 }
 
 // ── Classes ───────────────────────────────────────────────────────────────────
@@ -98,6 +102,12 @@ pub async fn get_attendance_summary(
     Ok(ok(service::get_attendance_summary(&s.db, student_id, q.course_id).await?))
 }
 
+pub async fn get_attendance_defaulters(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::list_attendance_defaulters(&s.db, &c).await?))
+}
+
 // ── Timetable ─────────────────────────────────────────────────────────────────
 pub async fn create_timetable_slot(
     State(s): State<AppState>, Extension(c): Extension<Claims>,
@@ -117,4 +127,96 @@ pub async fn list_allocations(
     State(s): State<AppState>, Extension(c): Extension<Claims>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     Ok(ok(service::list_allocations(&s.db, &c).await?))
+}
+
+pub async fn list_curriculums(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::list_curriculums(&s.db, &c).await?))
+}
+
+pub async fn set_course_prerequisite(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Path(course_id): Path<Uuid>, Json(b): Json<SetCoursePrerequisiteRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::set_course_prerequisite(&s.db, &c, course_id, b.prerequisite_course_id).await?))
+}
+
+pub async fn get_course_prerequisites(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Path(course_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::get_course_prerequisites(&s.db, &c, course_id).await?))
+}
+
+pub async fn add_curriculum_course(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Path(curriculum_id): Path<Uuid>, Json(b): Json<AddCurriculumCourseRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::add_curriculum_course(&s.db, &c, curriculum_id, b).await?))
+}
+
+pub async fn get_curriculum_courses(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Path(curriculum_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::get_curriculum_courses(&s.db, &c, curriculum_id).await?))
+}
+
+pub async fn create_leave_request(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Json(b): Json<CreateLeaveRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::create_leave_request(&s.db, &c, b).await?))
+}
+
+pub async fn list_leave_requests(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::list_leave_requests(&s.db, &c).await?))
+}
+
+pub async fn update_leave_status(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Path(leave_id): Path<Uuid>, Json(b): Json<UpdateLeaveStatusRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::update_leave_status(&s.db, &c, leave_id, b.status).await?))
+}
+
+// ── Quizzes & Notifications Handlers ─────────────────────────────────────
+
+pub async fn create_quiz(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Json(b): Json<CreateQuizRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    use validator::Validate;
+    b.validate().map_err(|e| AppError::Validation(e.to_string()))?;
+    Ok(ok(service::create_quiz(&s.db, &c, b).await?))
+}
+
+pub async fn list_quizzes(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::list_quizzes(&s.db, &c).await?))
+}
+
+pub async fn create_notification(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+    Json(b): Json<CreateNotificationRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    use validator::Validate;
+    b.validate().map_err(|e| AppError::Validation(e.to_string()))?;
+    Ok(ok(service::create_notification(&s.db, &c, b).await?))
+}
+
+pub async fn list_notifications(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::list_notifications(&s.db, &c).await?))
+}
+
+pub async fn list_faculty(
+    State(s): State<AppState>, Extension(c): Extension<Claims>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(ok(service::list_faculty(&s.db, &c).await?))
 }

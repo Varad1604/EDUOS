@@ -323,6 +323,42 @@ pub async fn issue_sick_leave(
     .bind(&cert_num)
     .fetch_one(db)
     .await?;
+
+    // Attendance integration: Auto-mark attendance as 'Sick' for enrolled classes/courses during the leave period
+    if let Ok(enrollments) = sqlx::query_as::<_, (Uuid, Uuid)>(
+        r#"
+        SELECT ce.class_id, ca.course_id
+        FROM class_enrollments ce
+        JOIN course_allocations ca ON ca.class_id = ce.class_id
+        WHERE ce.student_id = $1
+        "#
+    )
+    .bind(req.student_id)
+    .fetch_all(db)
+    .await {
+        let mut curr = req.leave_from;
+        while curr <= req.leave_to {
+            for (class_id, course_id) in &enrollments {
+                let _ = sqlx::query(
+                    r#"
+                    INSERT INTO attendance (institution_id, student_id, course_id, class_id, attendance_date, status)
+                    VALUES ($1, $2, $3, $4, $5, 'Sick')
+                    ON CONFLICT (student_id, course_id, attendance_date)
+                    DO UPDATE SET status = 'Sick', marked_at = NOW()
+                    "#
+                )
+                .bind(institution_id)
+                .bind(req.student_id)
+                .bind(course_id)
+                .bind(class_id)
+                .bind(curr)
+                .execute(db)
+                .await;
+            }
+            curr = curr + Duration::days(1);
+        }
+    }
+
     Ok(row)
 }
 

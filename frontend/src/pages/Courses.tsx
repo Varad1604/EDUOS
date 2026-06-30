@@ -23,6 +23,9 @@ export default function Courses() {
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingCourse, setEditingCourse] = useState<Course | null>(null);
+  const [managingPrerequisites, setManagingPrerequisites] = useState<Course | null>(null);
+  const [prerequisites, setPrerequisites] = useState<any[]>([]);
+  const [selectedPrerequisiteId, setSelectedPrerequisiteId] = useState('');
 
   // Form fields
   const [courseCode, setCourseCode] = useState('');
@@ -32,22 +35,34 @@ export default function Courses() {
   const [semester, setSemester] = useState(1);
   const [error, setError] = useState('');
 
+  const [curriculums, setCurriculums] = useState<any[]>([]);
+
   const fetchCourses = () => {
     setLoading(true);
     academicsApi.courses.list()
       .then(r => setCourses(r.data.data ?? []))
-      .catch(() => {})
+      .catch(err => console.warn('Request failed:', err))
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { fetchCourses(); }, []);
+  const fetchCurriculums = () => {
+    academicsApi.curriculums.list()
+      .then(r => setCurriculums(r.data.data ?? []))
+      .catch(err => console.warn('Request failed:', err));
+  };
+
+  useEffect(() => { fetchCourses(); fetchCurriculums(); }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!can('courses.create')) return;
     setError('');
     if (!courseCode || !courseName) { setError('Please fill in all required fields'); return; }
-    const curriculumId = courses[0]?.curriculum_id || '550e8400-e29b-41d4-a716-446655440000';
+    const curriculumId = curriculums[0]?.curriculum_id || courses[0]?.curriculum_id;
+    if (!curriculumId) {
+      setError('No active curriculum found. Please create curriculum versions first.');
+      return;
+    }
     academicsApi.courses.create({
       curriculum_id: curriculumId, course_code: courseCode, course_name: courseName,
       credits: parseFloat(credits.toString()), course_type: courseType,
@@ -81,6 +96,36 @@ export default function Courses() {
         const e = err as { response?: { data?: { errors?: { message?: string }[] } } };
         setError(e.response?.data?.errors?.[0]?.message || 'Failed to update course');
       });
+  };
+
+  const handleDelete = (id: string, code: string) => {
+    if (!can('courses.edit')) return;
+    if (window.confirm(`Are you sure you want to delete course ${code}? This action cannot be undone.`)) {
+      academicsApi.courses.delete(id)
+        .then(() => fetchCourses())
+        .catch((err: unknown) => {
+          const e = err as { response?: { data?: { errors?: { message?: string }[] } } };
+          alert(e.response?.data?.errors?.[0]?.message || 'Failed to delete course');
+        });
+    }
+  };
+
+  const handleManagePrerequisites = (course: Course) => {
+    setManagingPrerequisites(course);
+    academicsApi.courses.prerequisites(course.course_id)
+      .then(res => setPrerequisites(res.data.data ?? []))
+      .catch(err => console.error(err));
+  };
+
+  const handleAddPrerequisite = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!managingPrerequisites || !selectedPrerequisiteId) return;
+    academicsApi.courses.setPrerequisite(managingPrerequisites.course_id, { prerequisite_course_id: selectedPrerequisiteId })
+      .then(() => {
+        handleManagePrerequisites(managingPrerequisites);
+        setSelectedPrerequisiteId('');
+      })
+      .catch(err => console.error(err));
   };
 
   const pageSubtitle =
@@ -206,6 +251,43 @@ export default function Courses() {
           </div>
         )}
 
+        {/* Manage Prerequisites Modal */}
+        {managingPrerequisites && (
+          <div className="modal-overlay" onClick={() => setManagingPrerequisites(null)}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+              <h2>Manage Prerequisites for {managingPrerequisites.course_code}</h2>
+              <div style={{ marginBottom: 16 }}>
+                <h4>Current Prerequisites</h4>
+                {prerequisites.length === 0 ? (
+                  <p style={{ color: 'var(--color-text-muted)' }}>No prerequisites set.</p>
+                ) : (
+                  <ul style={{ paddingLeft: 20 }}>
+                    {prerequisites.map(p => {
+                      const c = courses.find(course => course.course_id === p.prerequisite_course_id);
+                      return <li key={p.id}>{c ? `${c.course_code} - ${c.course_name}` : p.prerequisite_course_id}</li>;
+                    })}
+                  </ul>
+                )}
+              </div>
+              <form onSubmit={handleAddPrerequisite} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label">Add Prerequisite</label>
+                  <select className="form-select" value={selectedPrerequisiteId} onChange={e => setSelectedPrerequisiteId(e.target.value)}>
+                    <option value="">Select a course...</option>
+                    {courses.filter(c => c.course_id !== managingPrerequisites.course_id).map(c => (
+                      <option key={c.course_id} value={c.course_id}>{c.course_code} - {c.course_name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                  <button className="btn btn-primary" type="submit" disabled={!selectedPrerequisiteId}>Add Prerequisite</button>
+                  <button className="btn btn-secondary" type="button" onClick={() => setManagingPrerequisites(null)}>Done</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         <div className="card">
           {loading ? (
             <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading courses…</div>
@@ -241,7 +323,11 @@ export default function Courses() {
                       <td>{c.min_marks} / {c.max_marks}</td>
                       {can('courses.edit') && (
                         <td>
-                          <button className="btn btn-secondary btn-sm" onClick={() => { setError(''); setEditingCourse(c); }}>Edit</button>
+                          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <button className="btn btn-secondary btn-sm" onClick={() => { setError(''); setEditingCourse(c); }}>Edit</button>
+                            <button className="btn btn-secondary btn-sm" onClick={() => handleManagePrerequisites(c)}>Prerequisites</button>
+                            <button className="btn btn-secondary btn-sm" style={{ color: 'var(--color-danger)', borderColor: 'var(--color-danger)' }} onClick={() => handleDelete(c.course_id, c.course_code)}>Delete</button>
+                          </div>
                         </td>
                       )}
                     </tr>
